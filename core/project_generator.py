@@ -94,7 +94,7 @@ class ProjectGenerator:
             self._log_progress(f"🚀 Iniciando creación de '{app_name}'...")
 
             # Paso 1: Crear proyecto Angular base con CLI
-            if not await self._create_angular_project(app_path, app_name):
+            if not self._create_angular_project(app_path, app_name):
                 result["errors"].append("Error creando proyecto Angular")
                 return result
 
@@ -147,55 +147,89 @@ class ProjectGenerator:
             return False
         return True
 
-    async def _create_angular_project(self, app_path: Path, app_name: str) -> bool:
-        """Crea proyecto Angular base usando ng new"""
+    
+    def _create_angular_project(self, app_path: Path, app_name: str) -> bool:
+        """Crea proyecto Angular base usando ng new (versión corregida para Windows)"""
         self._log_progress(f"📦 Creando proyecto Angular '{app_name}'...")
-
+        
         try:
-            # Comando ng new con opciones corporativas
+            import subprocess
+            import shutil
+            
+            # 🛠️ CRÍTICO: Encontrar la ruta completa de 'ng' en Windows
+            # Primero intentar con shutil.which (busca en PATH)
+            ng_path = shutil.which("ng")
+            
+            # Si no lo encuentra, usar ruta típica de npm global en Windows
+            if not ng_path:
+                ng_cmd_path = Path.home() / "AppData" / "Roaming" / "npm" / "ng.cmd"
+                if ng_cmd_path.exists():
+                    ng_path = str(ng_cmd_path)
+                else:
+                    # Último intento: buscar en PATH manualmente
+                    env_path = os.environ.get("PATH", "")
+                    for path_dir in env_path.split(";"):
+                        candidate = Path(path_dir) / "ng.cmd"
+                        if candidate.exists():
+                            ng_path = str(candidate)
+                            break
+            
+            if not ng_path:
+                logger.error("❌ No se encontró 'ng' en PATH ni en rutas típicas de npm")
+                logger.error(f"💡 PATH actual: {os.environ.get('PATH', '')[:200]}...")
+                return False
+            
+            logger.info(f"✅ Usando Angular CLI en: {ng_path}")
+            
+            # Preparar entorno con PATH que incluya npm global
+            env = os.environ.copy()
+            npm_global_path = str(Path.home() / "AppData" / "Roaming" / "npm")
+            if npm_global_path not in env.get("PATH", ""):
+                env["PATH"] = npm_global_path + ";" + env.get("PATH", "")
+            
+            # Comando ng new con ruta completa al ejecutable
             cmd = [
-                "ng", "new", app_name,
+                ng_path,  # ← Usar ruta completa en lugar de solo "ng"
+                "new", app_name,
                 "--routing", "true",
                 "--style", "scss",
-                "--skip-git", "true",  # No inicializar git automáticamente
+                "--skip-git", "true",
                 "--minimal", "false"
             ]
-
-            # Ejecutar en el directorio de salida
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
+            
+            # Ejecutar con subprocess.run (síncrono para evitar NotImplementedError)
+            process = subprocess.run(
+                cmd,
                 cwd=str(self.output_dir),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                # Responder automáticamente a prompts de ng new
-                stdin=asyncio.subprocess.PIPE
+                env=env,
+                input=b'Y\n',  # Responder 'Y' a prompts de ng new
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=300,  # 5 minutos timeout
+                shell=False   # ← Importante: False para seguridad
             )
-
-            # Enviar 'Y' para confirmar CSS y otras preguntas
-            process.stdin.write(b'Y\n')
-            await process.stdin.drain()
-
-            # Esperar con timeout
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=300  # 5 minutos para ng new
-            )
-
+            
+            # Logging mejorado para debug
             if process.returncode != 0:
-                logger.error(f"❌ ng new falló: {stderr.decode()}")
+                stderr_text = process.stderr.decode('utf-8', errors='ignore')[:500]
+                stdout_text = process.stdout.decode('utf-8', errors='ignore')[:500]
+                logger.error(f"❌ ng new falló (code={process.returncode}):")
+                logger.error(f"   STDOUT: {stdout_text}")
+                logger.error(f"   STDERR: {stderr_text}")
                 return False
-
+            
             self._log_progress(f"✅ Proyecto Angular creado en {app_path}")
             return True
-
-        except asyncio.TimeoutError:
-            logger.error("⏰ Timeout en ng new")
+            
+        except subprocess.TimeoutExpired:
+            logger.error("⏰ Timeout en ng new (300s)")
             return False
-        except FileNotFoundError:
-            logger.error("❌ Angular CLI no encontrado. Ejecuta: npm install -g @angular/cli")
+        except FileNotFoundError as e:
+            logger.error(f"❌ Angular CLI no encontrado: {e}")
+            logger.error("💡 Verifica: ng version")
             return False
         except Exception as e:
-            logger.error(f"❌ Error en _create_angular_project: {e}")
+            logger.error(f"❌ Error en _create_angular_project: {type(e).__name__}: {e}", exc_info=True)
             return False
 
     async def _generate_app_code(self, app_path: Path, api_spec: Optional[str],
@@ -313,81 +347,84 @@ NO incluyas explicaciones, solo los archivos en el formato especificado."""
 
         return files_written
 
-    async def _install_dependencies(self, app_path: Path) -> bool:
-        """Instala dependencias adicionales si son necesarias"""
+    def _install_dependencies(self, app_path: Path) -> bool:
+        """Instala dependencias con npm install (síncrono)"""
         self._log_progress("📦 Instalando dependencias...")
-
+        
         try:
-            # Ejecutar npm install
-            process = await asyncio.create_subprocess_exec(
-                "npm", "install",
+            import subprocess
+            
+            process = subprocess.run(
+                ["npm", "install"],
                 cwd=str(app_path),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=600  # 10 minutos
             )
-
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=600  # 10 minutos para npm install
-            )
-
+            
             if process.returncode != 0:
-                logger.error(f"❌ npm install falló: {stderr.decode()[:500]}")
+                logger.error(f"❌ npm install falló: {process.stderr.decode()[:500]}")
                 return False
-
+            
             self._log_progress("✅ Dependencias instaladas")
             return True
-
-        except asyncio.TimeoutError:
+            
+        except subprocess.TimeoutExpired:
             logger.error("⏰ Timeout en npm install")
             return False
         except FileNotFoundError:
-            logger.error("❌ npm no encontrado. Asegúrate de tener Node.js instalado")
+            logger.error("❌ npm no encontrado. Instala Node.js")
             return False
         except Exception as e:
             logger.error(f"❌ Error en _install_dependencies: {e}")
             return False
 
-    async def _start_dev_server(self, app_path: Path) -> Optional[int]:
-        """Inicia ng serve y devuelve el puerto donde está corriendo"""
+    def _start_dev_server(self, app_path: Path) -> Optional[int]:
+        """Inicia ng serve en background (síncrono con Popen)"""
         port = 4200
-        self._log_progress(f"🚀 Iniciando servidor de desarrollo en puerto {port}...")
-
+        self._log_progress(f"🚀 Iniciando servidor en puerto {port}...")
+        
         try:
-            # Ejecutar ng serve en background
-            process = await asyncio.create_subprocess_exec(
-                "ng", "serve",
-                "--port", str(port),
-                "--host", "0.0.0.0",
-                "--disable-host-check",
+            import subprocess
+            
+            # Preparar entorno
+            env = os.environ.copy()
+            npm_global_path = Path.home() / "AppData" / "Roaming" / "npm"
+            if str(npm_global_path) not in env.get("PATH", ""):
+                env["PATH"] = str(npm_global_path) + ";" + env.get("PATH", "")
+            
+            # Iniciar ng serve en background con Popen
+            process = subprocess.Popen(
+                ["ng", "serve", "--port", str(port), "--host", "0.0.0.0", "--disable-host-check"],
                 cwd=str(app_path),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0  # Windows: sin ventana console
             )
-
-            # Esperar a que el servidor esté listo (buscar "Compiled successfully")
+            
+            # Esperar a que compile (leer stdout hasta "Compiled successfully")
             compiled = False
             start_wait = datetime.now()
-
+            
             while not compiled and (datetime.now() - start_wait).total_seconds() < 120:
-                line = await process.stdout.readline()
+                line = process.stdout.readline()
                 if not line:
                     break
-
                 line_str = line.decode('utf-8', errors='ignore').strip()
-
+                
                 if "Compiled successfully" in line_str:
                     compiled = True
                     self._log_progress("✅ Servidor compilado y corriendo")
                     break
                 elif "error" in line_str.lower() and "Compiled" not in line_str:
                     logger.warning(f"⚠️ ng serve: {line_str}")
-
+            
             if not compiled:
                 logger.warning("⚠️ El servidor puede no estar compilado correctamente")
-
+            
             return port
-
+            
         except FileNotFoundError:
             logger.error("❌ Angular CLI no encontrado para ng serve")
             return None
