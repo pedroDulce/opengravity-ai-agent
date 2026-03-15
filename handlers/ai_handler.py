@@ -8,6 +8,9 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from pathlib import Path
 import glob
+import re
+import httpx
+from core.context_manager import ContextManager
 
 
 # Importar el cliente unificado
@@ -872,3 +875,289 @@ Máximo 100 palabras."""
     except Exception as e:
         logger.error(f"❌ Error en /angular: {e}", exc_info=True)
         await update.message.reply_text(f"❌ Error: `{e}`", parse_mode='Markdown')
+
+# handlers/ai_handler.py - AÑADIR al final del archivo (después de cmd_angular)
+
+
+# ==============================
+# COMANDOS DE CONOCIMIENTO CORPORATIVO
+# ==============================
+
+async def cmd_context(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Comando /context [acción] - Gestiona la base de conocimiento corporativa
+    
+    Acciones:
+    /context list          - Lista documentos disponibles
+    /context reload        - Recarga documentos desde disco
+    /context search [term] - Busca documentos por palabra clave
+    """
+    if not update.message:
+        return
+    
+    # 🔐 Seguridad: solo el dueño del chat
+    user_chat_id = update.effective_user.id
+    allowed_chat_id = int(os.getenv("TELEGRAM_USER_CHAT_ID", "0"))
+    if user_chat_id != allowed_chat_id:
+        await update.message.reply_text("❌ No tienes permiso para este comando")
+        return
+    
+    action = " ".join(context.args).strip().lower()
+    
+    # Obtener o crear ContextManager singleton
+    if not hasattr(cmd_context, "_ctx_manager"):
+        cmd_context._ctx_manager = ContextManager()  # type: ignore
+    
+    ctx_manager = cmd_context._ctx_manager  # type: ignore
+    
+    if action == "list" or not action:
+        docs = ctx_manager.list_documents()
+        response = "📚 *Documentos disponibles*:\n\n"
+        for category, files in docs.items():
+            if files:
+                response += f"*{category}*:\n"
+                for f in files[:5]:  # Máximo 5 por categoría
+                    response += f"  • `{f}`\n"
+                if len(files) > 5:
+                    response += f"  ... y {len(files) - 5} más\n"
+                response += "\n"
+        
+        if not any(docs.values()):
+            response = "⚠️ No hay documentos en la carpeta `knowledge/`.\n\n"
+            response += "Añade guías en:\n"
+            response += "`knowledge/angular-guidelines/`\n"
+            response += "`knowledge/examples/`\n"
+        
+        await update.message.reply_text(response, parse_mode=None)
+        
+    elif action.startswith("reload"):
+        ctx_manager.reload()
+        await update.message.reply_text("✅ Base de conocimiento recargada")
+        
+    elif action.startswith("search"):
+        query = action.replace("search", "").strip()
+        if not query:
+            await update.message.reply_text("💡 Uso: `/context search [término]`")
+            return
+        
+        ctx = ctx_manager.get_context(query, max_tokens=500)
+        preview = ctx[:1000] + "..." if len(ctx) > 1000 else ctx
+        await update.message.reply_text(f"🔍 *Resultados para '{query}':*\n\n{preview}", parse_mode=None)
+        
+    else:
+        await update.message.reply_text(
+            "💡 *Acciones disponibles*:\n"
+            "`/context list` - Ver documentos\n"
+            "`/context reload` - Recargar desde disco\n"
+            "`/context search [term]` - Buscar por palabra clave",
+            parse_mode=None
+        )
+
+
+async def cmd_swagger(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Comando /swagger [url_o_ruta] - Genera código Angular desde OpenAPI/Swagger
+    """
+    if not update.message:
+        return
+    
+    client = get_ai_client()
+    if not client:
+        await update.message.reply_text("❌ IA no configurada")
+        return
+    
+    spec_source = " ".join(context.args).strip()
+    if not spec_source:
+        await update.message.reply_text(
+            "💡 *Uso*: `/swagger [url_o_ruta_del_especificación]`\n\n"
+            "Ejemplos:\n"
+            "• `/swagger https://api.corp.com/v1/openapi.json`\n"
+            "• `/swagger C:/backend/swagger.yaml`",
+            parse_mode=None
+        )
+        return
+    
+    # 🔐 Seguridad: validar ruta si es local
+    if spec_source.startswith(("C:/", "D:/", "/")):
+        try:
+            abs_path = Path(spec_source).resolve()
+            is_allowed = any(
+                str(abs_path).startswith(str(d.resolve()))
+                for d in ALLOWED_DIRECTORIES
+            )
+            if not is_allowed or not abs_path.exists():
+                await update.message.reply_text("❌ Ruta no permitida o no encontrada")
+                return
+            spec_content = abs_path.read_text(encoding="utf-8")
+            spec_type = "archivo local"
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error leyendo archivo: {e}")
+            return
+    else:
+        # Es una URL - descargar
+        try:
+            async with httpx.AsyncClient(timeout=30) as http_client:
+                response = await http_client.get(spec_source)
+                response.raise_for_status()
+                spec_content = response.text
+                spec_type = "URL"
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error descargando Swagger: {e}")
+            return
+    
+    await update.message.reply_text(f"🔍 *Analizando especificación {spec_type}*... ⏳")
+    
+    # Obtener contexto corporativo Angular
+    ctx_manager = getattr(cmd_context, "_ctx_manager", None)
+    angular_context = ""
+    if ctx_manager:
+        angular_context = ctx_manager.get_context(
+            "angular component service httpclient typescript",
+            category="angular-guidelines",
+            max_tokens=2000
+        )
+    
+    prompt = f"""Eres un desarrollador Angular senior experto en generar código desde especificaciones OpenAPI/Swagger.
+
+ESPECIFICACIÓN API ({spec_type}):
+```json
+{spec_content[:8000]}
+{angular_context if angular_context else ""}
+TU TAREA:
+Genera código Angular que consuma esta API siguiendo EXACTAMENTE las convenciones corporativas:
+
+    Interfaces TypeScript para todos los modelos (nombres PascalCase)
+    Services con HttpClient tipado (sufijo Service, providedIn: 'root')
+    Ejemplo de componente que use el servicio
+    Interceptor example si la API requiere auth
+
+REQUISITOS:
+
+    Usa takeUntil o async pipe para suscripciones
+    Tipado estricto: NO usar any
+    Manejo de errores con HttpErrorResponse
+    Comentarios en español
+    Sigue la estructura de archivos del ejemplo corporativo
+
+FORMATO DE RESPUESTA:
+
+    Breve resumen de lo generado
+    Código en bloques markdown separados por archivo
+    Notas sobre integración con la app existente
+    """
+    try:
+        response = await asyncio.wait_for(
+            asyncio.to_thread(client.generate, prompt),
+            timeout=180.0
+        )
+        
+        await _send_long_message(update, f"🔗 Código Angular generado desde Swagger:\n\n{response}")
+    
+    except asyncio.TimeoutError:
+        await update.message.reply_text("⏰ Timeout: El análisis de Swagger excedió 3 minutos.")
+    except Exception as e:
+        logger.error(f"❌ Error en /swagger: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Error: {e}", parse_mode=None)
+
+async def cmd_tests(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Comando /tests [ruta] - Analiza tests de backend y genera frontend compatible
+    """
+    if not update.message:
+        return
+
+    client = get_ai_client()
+    if not client:
+        await update.message.reply_text("❌ IA no configurada")
+        return
+
+    test_path = " ".join(context.args).strip()
+    if not test_path:
+        await update.message.reply_text(
+            "💡 *Uso*: `/tests [ruta_de_tests_backend]`\n\n"
+            "Ejemplos:\n"
+            "• `/tests C:/backend/src/auth/login.spec.ts`\n"
+            "• `/tests C:/backend/tests/integration`",
+            parse_mode=None
+        )
+        return
+
+    # 🔐 Validar ruta permitida
+    try:
+        abs_path = Path(test_path).resolve()
+        is_allowed = any(
+            str(abs_path).startswith(str(d.resolve()))
+            for d in ALLOWED_DIRECTORIES
+        )
+        if not is_allowed or not abs_path.exists():
+            await update.message.reply_text("❌ Ruta no permitida o no encontrada")
+            return
+        
+        # Leer contenido de tests
+        if abs_path.is_file():
+            test_content = abs_path.read_text(encoding="utf-8")
+            description = f"archivo `{abs_path.name}`"
+        else:
+            test_files = list(abs_path.rglob("*.spec.*"))[:5]
+            if not test_files:
+                await update.message.reply_text("❌ No se encontraron archivos de test (*.spec.*)")
+                return
+            
+            test_content = "\n\n".join(
+                f"// 📄 {f.relative_to(abs_path)}\n{f.read_text(encoding='utf-8', errors='ignore')[:2000]}"
+                for f in test_files
+            )
+            description = f"directorio `{abs_path.name}` ({len(test_files)} archivos)"
+            
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error leyendo tests: {e}")
+        return
+
+    await update.message.reply_text(f"🧪 *Analizando {description}*... ⏳")
+
+    # Obtener contexto Angular corporativo
+    ctx_manager = getattr(cmd_context, "_ctx_manager", None)
+    angular_context = ""
+    if ctx_manager:
+        angular_context = ctx_manager.get_context(
+            "angular service httpclient interface mock",
+            category="examples",
+            max_tokens=2000
+        )
+
+    prompt = f"""Eres un desarrollador full-stack experto en sincronizar frontend Angular con backend tests.
+TESTS DE BACKEND ANALIZADOS:
+    {test_content[:8000]}
+{angular_context if angular_context else ""}
+TU TAREA:
+Analiza estos tests y genera código Angular 100% compatible:
+
+    Infiere los endpoints (método HTTP, URL, request/response types)
+    Genera interfaces TypeScript basadas en los mocks de los tests
+    Crea un Service Angular con métodos tipados que coincidan con los contratos
+    Incluye ejemplos de error handling para los casos de fallo en los tests
+    Genera un ejemplo de componente que use este servicio
+REQUISITOS:
+
+    Los nombres deben coincidir EXACTAMENTE con lo que esperan los tests
+    Usa los mismos valores de ejemplo que aparecen en los tests
+    Sigue las convenciones corporativas del contexto Angular
+    Comentarios en español
+FORMATO:
+
+    📋 Resumen de endpoints inferidos
+    💻 Código generado (interfaces, service, ejemplo componente)
+    🧪 Cómo mockear este servicio en tests de frontend
+    """
+    try:
+        response = await asyncio.wait_for(
+            asyncio.to_thread(client.generate, prompt),
+            timeout=180.0
+        )
+        await _send_long_message(update, f"🧪 Frontend Angular compatible con tests backend:\n\n{response}")
+ 
+    except asyncio.TimeoutError:
+        await update.message.reply_text("⏰ Timeout: El análisis excedió 3 minutos.")
+    except Exception as e:
+        logger.error(f"❌ Error en /tests: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Error: {e}", parse_mode=None)

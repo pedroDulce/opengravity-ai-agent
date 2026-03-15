@@ -25,15 +25,19 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
+
 from handlers.ai_handler import (
-    cmd_ai,      
+    cmd_ai,
     cmd_dev,
     cmd_explain,
     cmd_debug,
-    cmd_review, 
+    cmd_review,
     cmd_analyze,
     cmd_improve,
-    cmd_angular
+    cmd_angular,
+    cmd_context,      
+    cmd_swagger,     
+    cmd_tests        
 )
 
 # opengravity_bot.py - Después de los imports (línea ~25)
@@ -226,11 +230,21 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /improve [archivo] - Reescribe el archivo con mejoras (crea backup)
 /angular [directorio] - Análisis específico de proyecto Angular 🅰️
 
+📚 *Conocimiento Corporativo*:
+/context [acción] - Gestiona base de conocimiento
+  • /context list - Ver documentos disponibles
+  • /context reload - Recargar desde disco
+  • /context search [term] - Buscar por palabra clave
+/swagger [url_o_ruta] - Genera Angular desde OpenAPI/Swagger
+/tests [ruta] - Genera frontend compatible con tests backend
+
 💡 *Ejemplos*:
-• `/ai ¿Qué es un DTO en Java?`
-• `/dev crear función Python para validar email`
-• `/review C:/Users/.../bot.py`
-• `/angular C:/Users/.../mi-app-angular`
+• /ai ¿Qué es un DTO en Java?
+• /dev crear función Python para validar email
+• /angular C:/Users/.../mi-app-angular
+• /context search interceptor
+• /swagger https://api.corp.com/v1/openapi.json
+• /tests C:/backend/src/auth
 
 📝 *Notas*:
 • Las respuestas pueden tardar 10-60 segundos
@@ -298,15 +312,20 @@ def create_application():
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("help", help_cmd))
 
-        # Handlers de IA
+    # Handlers de IA
     app.add_handler(CommandHandler("ai", cmd_ai))
     app.add_handler(CommandHandler("dev", cmd_dev))
     app.add_handler(CommandHandler("explain", cmd_explain))
     app.add_handler(CommandHandler("debug", cmd_debug))
-    app.add_handler(CommandHandler("review", cmd_review))   
-    app.add_handler(CommandHandler("analyze", cmd_analyze)) 
-    app.add_handler(CommandHandler("improve", cmd_improve)) 
-    app.add_handler(CommandHandler("angular", cmd_angular)) 
+    app.add_handler(CommandHandler("review", cmd_review))
+    app.add_handler(CommandHandler("analyze", cmd_analyze))
+    app.add_handler(CommandHandler("improve", cmd_improve))
+    app.add_handler(CommandHandler("angular", cmd_angular))
+    
+    # 🆕 Handlers de conocimiento corporativo
+    app.add_handler(CommandHandler("context", cmd_context))
+    app.add_handler(CommandHandler("swagger", cmd_swagger))
+    app.add_handler(CommandHandler("tests", cmd_tests))
 
     app.add_handler(MessageHandler(filters.TEXT, echo))    
     app.add_handler(MessageHandler(filters.Regex(r"^/"), unknown_cmd))

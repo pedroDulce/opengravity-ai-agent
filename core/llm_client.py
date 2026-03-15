@@ -342,6 +342,41 @@ Uso:
                     language: str = "python") -> str:
         return self._client.debug_error(error_message, code_context, language)
 
+    # core/llm_client.py - AÑADIR este método en la clase LLMClient
+
+    def generate_with_context(self, prompt: str, context: Optional[str] = None, 
+                              system_instruction: Optional[str] = None) -> str:
+        """
+        Genera respuesta inyectando contexto corporativo en el prompt.
+        
+        Args:
+            prompt: La consulta del usuario
+            context: Contexto corporativo pre-recuperado (de ContextManager)
+            system_instruction: Instrucciones adicionales del sistema
+            
+        Returns:
+            Respuesta de la IA con contexto aplicado
+        """
+        # Construir prompt enriquecido con contexto
+        enriched_prompt = prompt
+        
+        if context:
+            enriched_prompt = f"""{context}
+
+---
+
+🎯 TU TAREA:
+{prompt}
+
+⚠️ IMPORTANTE: 
+- El código generado DEBE seguir EXACTAMENTE las convenciones mostradas en el contexto corporativo arriba.
+- Usa los nombres de componentes, servicios y patrones definidos en la documentación.
+- Si algo no está cubierto en el contexto, aplica mejores prácticas estándar de Angular.
+"""
+        
+        # Delegar al método generate existente
+        return self.generate(enriched_prompt, system_instruction)
+
     @property
     def provider(self) -> str:
         return self.provider_name
