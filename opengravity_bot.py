@@ -25,7 +25,6 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
-
 from handlers.ai_handler import (
     cmd_ai,
     cmd_dev,
@@ -36,7 +35,8 @@ from handlers.ai_handler import (
     cmd_improve,
     cmd_angular,
     cmd_context,      
-    cmd_swagger,     
+    cmd_swagger,
+    cmd_create,    
     cmd_tests        
 )
 
@@ -238,6 +238,11 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /swagger [url_o_ruta] - Genera Angular desde OpenAPI/Swagger
 /tests [ruta] - Genera frontend compatible con tests backend
 
+🏗️ *Generación de Proyectos*:
+/create [app] [desc] - Crea app Angular autónomamente
+  • /create petstore-app "App para Petstore API"
+  • /create my-app https://api.example.com/openapi.json
+
 💡 *Ejemplos*:
 • /ai ¿Qué es un DTO en Java?
 • /dev crear función Python para validar email
@@ -326,6 +331,7 @@ def create_application():
     app.add_handler(CommandHandler("context", cmd_context))
     app.add_handler(CommandHandler("swagger", cmd_swagger))
     app.add_handler(CommandHandler("tests", cmd_tests))
+    app.add_handler(CommandHandler("create", cmd_create))
 
     app.add_handler(MessageHandler(filters.TEXT, echo))    
     app.add_handler(MessageHandler(filters.Regex(r"^/"), unknown_cmd))

@@ -8,7 +8,6 @@ import os
 import logging
 from pathlib import Path
 from typing import Optional, List, Dict
-from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -16,12 +15,6 @@ logger = logging.getLogger(__name__)
 class ContextManager:
     """
     Gestiona la base de conocimiento corporativa para inyectar contexto en los prompts de IA.
-    
-    Características:
-    - Carga documentos Markdown/TS de la carpeta knowledge/
-    - Indexa por categorías (angular-guidelines, api-contracts, examples)
-    - Recupera contexto relevante según la consulta del usuario
-    - Limita el contexto para no exceder límites de tokens del LLM
     """
     
     def __init__(self, knowledge_path: Optional[str] = None):
@@ -31,7 +24,9 @@ class ContextManager:
         Args:
             knowledge_path: Ruta a la carpeta knowledge/ (por defecto: ./knowledge)
         """
-        self.knowledge_path = Path(knowledge_path or "knowledge").resolve()
+        # Usar ruta absoluta desde la raíz del proyecto
+        base_dir = Path(__file__).resolve().parent.parent
+        self.knowledge_path = Path(knowledge_path or base_dir / "knowledge").resolve()
         self._cache: Dict[str, str] = {}
         self._index: Dict[str, List[Path]] = {
             "angular-guidelines": [],
@@ -55,7 +50,9 @@ class ContextManager:
             category_path = self.knowledge_path / category
             if category_path.exists():
                 for file in category_path.rglob("*"):
-                    if file.suffix in [".md", ".ts", ".json", ".yaml", ".yml"]:
+                    if file.suffix in [".md", ".ts", ".json", ".yaml", ".yml", ".txt"]:
+                        if file.name.startswith("."):  # Ignorar archivos ocultos
+                            continue
                         self._index[category].append(file)
                         # Cargar contenido en caché
                         try:
@@ -68,10 +65,10 @@ class ContextManager:
     def get_context(self, query: str, category: Optional[str] = None, 
                     max_tokens: int = 3000) -> str:
         """
-        Recupera contexto relevante para una consulta.
+        Recupera contexto relevante para una consulta BUSCANDO EN EL CONTENIDO de los documentos.
         
         Args:
-            query: La consulta del usuario (para búsqueda semántica simple)
+            query: La consulta del usuario (para búsqueda por palabras clave)
             category: Filtrar por categoría (angular-guidelines, api-contracts, examples, general)
             max_tokens: Límite aproximado de tokens para el contexto devuelto
             
@@ -80,50 +77,68 @@ class ContextManager:
         """
         relevant_docs = []
         query_lower = query.lower()
+        query_words = set(query_lower.split())
         
-        # Filtrar por categoría si se especifica
+        # Categorías a buscar
         categories_to_search = [category] if category else list(self._index.keys())
         
         for cat in categories_to_search:
             for file_path in self._index.get(cat, []):
                 content = self._cache.get(str(file_path), "")
+                content_lower = content.lower()
                 
-                # Búsqueda simple por palabras clave (puede mejorarse con embeddings)
-                if any(keyword in query_lower for keyword in 
-                      ["angular", "component", "service", "module", "typescript"]):
-                    if cat == "angular-guidelines" or cat == "examples":
-                        relevant_docs.append((file_path, content))
+                # ✅ Búsqueda REAL en el contenido del archivo
+                score = 0
                 
-                elif any(keyword in query_lower for keyword in 
-                        ["api", "endpoint", "swagger", "openapi", "http", "rest"]):
-                    if cat == "api-contracts" or cat == "examples":
-                        relevant_docs.append((file_path, content))
+                # Palabras clave de la query en el contenido
+                for word in query_words:
+                    if len(word) > 3:  # Ignorar palabras muy cortas
+                        if word in content_lower:
+                            score += content_lower.count(word)
                 
-                elif any(keyword in query_lower for keyword in 
-                        ["test", "spec", "jest", "jasmine", "karma"]):
-                    if cat == "examples":
-                        relevant_docs.append((file_path, content))
+                # Bonus por coincidencia en nombre de archivo
+                if any(word in file_path.name.lower() for word in query_words):
+                    score += 5
+                
+                # Bonus por categoría específica
+                if category and cat == category:
+                    score += 3
+                
+                # Si hay coincidencias, añadir a relevantes
+                if score > 0:
+                    relevant_docs.append((file_path, content, score))
         
-        # Si no hay resultados, devolver documentos generales
+        # Ordenar por relevancia (score más alto primero)
+        relevant_docs.sort(key=lambda x: x[2], reverse=True)
+        
+        # Si no hay resultados, devolver documentos de angular-guidelines como fallback
         if not relevant_docs:
-            for cat in ["angular-guidelines", "examples"]:
-                for file_path in self._index.get(cat, [])[:3]:  # Máximo 3 docs por defecto
-                    content = self._cache.get(str(file_path), "")
-                    relevant_docs.append((file_path, content))
+            for file_path in self._index.get("angular-guidelines", [])[:2]:
+                content = self._cache.get(str(file_path), "")
+                relevant_docs.append((file_path, content, 0))
+            for file_path in self._index.get("examples", [])[:2]:
+                content = self._cache.get(str(file_path), "")
+                relevant_docs.append((file_path, content, 0))
         
         # Formatear contexto para el prompt
         context_parts = []
         total_chars = 0
+        max_chars = max_tokens * 4  # Aprox: 1 token ≈ 4 chars
         
-        for file_path, content in relevant_docs:
+        for file_path, content, score in relevant_docs:
             rel_path = file_path.relative_to(self.knowledge_path)
-            header = f"\n\n--- 📄 {rel_path} ---\n"
+            header = f"\n\n--- 📄 {rel_path} (relevancia: {score}) ---\n"
             
-            if total_chars + len(header) + len(content) > max_tokens * 4:  # Aprox: 1 token ≈ 4 chars
+            if total_chars + len(header) + len(content) > max_chars:
+                # Truncar contenido si excede el límite
+                remaining = max_chars - total_chars - len(header)
+                if remaining > 100:
+                    context_parts.append(header)
+                    context_parts.append(content[:remaining])
                 break
             
             context_parts.append(header)
-            context_parts.append(content[:max_tokens//2])  # Limitar contenido por doc
+            context_parts.append(content)
             total_chars += len(header) + len(content)
         
         if not context_parts:
@@ -137,7 +152,7 @@ class ContextManager:
         ])
     
     def reload(self):
-        """Recarga todos los documentos desde disco (útil después de actualizar la knowledge base)"""
+        """Recarga todos los documentos desde disco"""
         self._cache.clear()
         for key in self._index:
             self._index[key] = []
@@ -152,3 +167,49 @@ class ContextManager:
                 str(f.relative_to(self.knowledge_path)) for f in files
             ]
         return result
+    
+    def search(self, query: str, max_results: int = 10) -> List[Dict]:
+        """
+        Búsqueda avanzada que devuelve resultados estructurados.
+        
+        Args:
+            query: Término de búsqueda
+            max_results: Máximo de resultados a devolver
+            
+        Returns:
+            Lista de dicts con: {file, category, score, preview}
+        """
+        results = []
+        query_lower = query.lower()
+        query_words = set(query_lower.split())
+        
+        for category, files in self._index.items():
+            for file_path in files:
+                content = self._cache.get(str(file_path), "")
+                content_lower = content.lower()
+                
+                score = 0
+                for word in query_words:
+                    if len(word) > 3:
+                        if word in content_lower:
+                            score += content_lower.count(word)
+                
+                if score > 0:
+                    # Crear preview del contenido
+                    preview_start = content_lower.find(query_lower.split()[0]) if query_words else 0
+                    preview_start = max(0, preview_start - 50)
+                    preview_end = min(len(content), preview_start + 200)
+                    preview = content[preview_start:preview_end].replace('\n', ' ').strip()
+                    if len(preview) >= 200:
+                        preview += "..."
+                    
+                    results.append({
+                        "file": str(file_path.relative_to(self.knowledge_path)),
+                        "category": category,
+                        "score": score,
+                        "preview": preview
+                    })
+        
+        # Ordenar por score y limitar resultados
+        results.sort(key=lambda x: x["score"], reverse=True)
+        return results[:max_results]
