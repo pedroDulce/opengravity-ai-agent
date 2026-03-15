@@ -197,3 +197,17 @@ copy .env.example .env
 
 # 5. Ejecutar el bot
 python opengravity_bot.py
+
+
+INslatado como servicio
+
+Con NSSM (Native Windows Service):
+
+    Descarga https://nssm.cc/download
+    Ejecuta nssm install OpenGravityBot
+    Configura:
+        Path: C:\Python314\python.exe
+        Startup directory: C:\Users\pedrodulce\develop\antigravity
+        Arguments: opengravity_bot.py
+    Click "Install service"
+    El bot se reiniciará automáticamente si se cierra

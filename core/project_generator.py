@@ -101,7 +101,8 @@ class ProjectGenerator:
             # Paso 2: Generar código desde API spec o descripción
             if api_spec or description:
                 if not await self._generate_app_code(app_path, api_spec, description):
-                    result["errors"]."].append("Error generando código de la app")
+                    # ✅ CORRECTO:
+                    result["errors"].append("Error generando código de la app")
                     return result
 
             # Paso 3: Instalar dependencias adicionales si es necesario

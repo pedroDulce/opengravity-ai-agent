@@ -57,6 +57,26 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
 # ⚠️ CONFIGURACIÓN CRÍTICA: ANTES DE CUALQUIER IMPORT DE RED ⚠️
 # ============================================================
 
+# opengravity_bot.py - Después de los imports, añadir:
+
+# ==============================
+# CONFIGURACIÓN DE RESILIENCIA DE RED
+# ==============================
+
+# Timeouts y retries para conexiones HTTP
+HTTP_CONNECT_TIMEOUT = 30.0      # Segundos para establecer conexión
+HTTP_READ_TIMEOUT = 120.0        # Segundos para leer respuesta
+HTTP_WRITE_TIMEOUT = 30.0        # Segundos para escribir request
+HTTP_POOL_TIMEOUT = 30.0         # Segundos para obtener conexión del pool
+
+# Reintentos para polling de Telegram
+POLLING_RETRY_DELAY = 5          # Segundos entre reintentos
+POLLING_MAX_RETRIES = 10         # Máximo reintentos antes de reiniciar
+POLLING_TIMEOUT = 30             # Timeout para getUpdates
+
+# Watchdog: reiniciar bot si no hay actividad
+WATCHDOG_TIMEOUT = 300           # Segundos sin actividad antes de reiniciar (5 min)
+
 # 1️⃣ Cargar .env PRIMERO (para que las variables estén disponibles)
 BASE_DIR = Path(__file__).resolve().parent
 ENV_PATH = BASE_DIR / ".env"
@@ -288,23 +308,29 @@ async def unknown_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # CREACIÓN DE LA APLICACIÓN
 # ============================================================
 
+# opengravity_bot.py - En create_application(), reemplazar la sección de HTTPXRequest:
+
 def create_application():
-    """Crea la aplicación de Telegram"""
+    """Crea la aplicación de Telegram con configuración resiliente"""
     
-    # HTTPXRequest con parámetros explícitos mínimos
-    # Proxy y SSL ya están configurados vía monkey-patch + ENV vars
+    # 🛡️ HTTPXRequest con timeouts y configuración de proxy robusta
     request = HTTPXRequest(
         connection_pool_size=20,
-        connect_timeout=10.0,
-        read_timeout=30.0
+        connect_timeout=HTTP_CONNECT_TIMEOUT,
+        read_timeout=HTTP_READ_TIMEOUT,
+        write_timeout=HTTP_WRITE_TIMEOUT,
+        pool_timeout=HTTP_POOL_TIMEOUT,
+        # Proxy ya configurado vía monkey-patch + ENV vars
     )
     
-    logger.info("✅ HTTPXRequest creado (SSL forzado vía monkey-patch)")
+    logger.info("✅ HTTPXRequest creado con timeouts configurados")
 
+    # ✅ CORRECTO - Opción A: Sin configurar get_updates_request (hereda de .request)
     app = (
         Application.builder()
         .token(BOT_TOKEN)
         .request(request)
+        # ✅ get_updates_request heredará configuración de .request
         .build()
     )
 
@@ -348,45 +374,131 @@ def create_application():
     return app
 
 
+# opengravity_bot.py - Añadir esta función antes de run_bot_async:
+
+async def run_with_retry(func, max_retries: int = POLLING_MAX_RETRIES, 
+                         delay: float = POLLING_RETRY_DELAY, *args, **kwargs):
+    """
+    Ejecuta una función async con reintentos exponenciales.
+    
+    Args:
+        func: Función async a ejecutar
+        max_retries: Número máximo de reintentos
+        delay: Delay base entre reintentos (segundos)
+        *args, **kwargs: Argumentos para la función
+    """
+    last_exception = None
+    
+    for attempt in range(max_retries + 1):
+        try:
+            return await func(*args, **kwargs)
+        except (httpx.RemoteProtocolError, httpx.ConnectError, 
+                httpx.ReadTimeout, httpx.WriteTimeout,
+                ConnectionResetError, ConnectionRefusedError) as e:
+            last_exception = e
+            logger.warning(f"⚠️ Error de red (intento {attempt+1}/{max_retries+1}): {type(e).__name__}: {e}")
+            
+            if attempt < max_retries:
+                # Exponential backoff: 5s, 10s, 20s, 40s...
+                wait_time = delay * (2 ** attempt)
+                logger.info(f"🔄 Reintentando en {wait_time}s...")
+                await asyncio.sleep(wait_time)
+            else:
+                logger.error(f"❌ Máximo de reintentos alcanzado. Último error: {e}")
+                raise
+    
+    # Si llegamos aquí, todos los reintentos fallaron
+    raise last_exception
+
 # ============================================================
 # FUNCIÓN ASÍNCRONA PRINCIPAL
 # ============================================================
 
+# opengravity_bot.py - Reemplazar run_bot_async completo:
+
 async def run_bot_async():
-    """Ejecuta el bot con event loop correcto para Python 3.14"""
+    """Ejecuta el bot con resiliencia a errores de red y watchdog"""
     
     print("\n" + "="*70)
     print("🤖  OPENGRAVITY TELEGRAM BOT  🤖")
     print("="*70)
     print(f"🌐 Proxy: {PROXY_URL}")
-    print(f"🔐 SSL: 🔓 Desarrollo (VDI controlada) - verify forzado a False")
+    print(f"🔐 SSL: 🔓 Desarrollo (VDI controlada)")
     print(f"🐍 Python: {sys.version.split()[0]}")
     print(f"🤖 PTB: {__import__('telegram').__version__}")
-    print(f"🌐 httpx: {__import__('httpx').__version__}")
-    print(f"🔧 Monkey-patch: httpx.AsyncClient.verify = False")
+    print(f"🛡️ Resiliencia: {POLLING_MAX_RETRIES} retries, watchdog {WATCHDOG_TIMEOUT}s")
     print("="*70 + "\n")
 
+    # Variable para el watchdog
+    last_activity = asyncio.get_event_loop().time()
+    
+    async def on_update_wrapper(update, context):
+        """Wrapper para trackear actividad del bot"""
+        nonlocal last_activity
+        last_activity = asyncio.get_event_loop().time()
+        # Delegar al handler original de polling
+        return await app.updater._Updater__process_update(update, context)
+    
     app = create_application()
     
     print("✅ Bot inicializado. Envía /start desde Telegram para probar")
     print("🛑 Ctrl+C para detener\n")
 
-    # Inicialización asíncrona correcta para Python 3.14
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling(drop_pending_updates=True)
-    
-    # Mantener el bot activo
     try:
+        # Inicialización con retry
+        await run_with_retry(app.initialize)
+        await app.start()
+        
+        # Start polling con retry
+        await run_with_retry(
+            app.updater.start_polling,
+            drop_pending_updates=True
+        )
+        
+        print("🟢 Polling iniciado exitosamente")
+        
+        # Loop principal con watchdog
         while True:
-            await asyncio.sleep(1)
+            # Verificar watchdog: si no hay actividad, reiniciar polling
+            current_time = asyncio.get_event_loop().time()
+            if current_time - last_activity > WATCHDOG_TIMEOUT:
+                logger.warning(f"⚠️ Watchdog: Sin actividad por {WATCHDOG_TIMEOUT}s. Reiniciando polling...")
+                
+                # Intentar reiniciar polling sin detener todo el bot
+                try:
+                    await app.updater.stop()
+                    await asyncio.sleep(2)
+                    await run_with_retry(
+                        app.updater.start_polling,
+                        drop_pending_updates=True
+                    )
+                    last_activity = current_time  # Reset watchdog
+                    logger.info("✅ Polling reiniciado exitosamente")
+                except Exception as e:
+                    logger.error(f"❌ Error reiniciando polling: {e}")
+                    # Si falla, dejar que el bot termine y se reinicie externamente
+                    break
+            
+            await asyncio.sleep(30)  # Check cada 30 segundos
+            
     except asyncio.CancelledError:
-        pass
+        logger.info("👋 Bot detenido por cancelación")
+    except (httpx.RemoteProtocolError, httpx.ConnectError) as e:
+        logger.error(f"❌ Error de red no recuperable: {e}")
+        logger.info("💡 El bot se detuvo. Reinícialo manualmente o configura un supervisor.")
+        raise
+    except Exception as e:
+        logger.critical(f"❌ Error crítico: {type(e).__name__}: {e}", exc_info=True)
+        raise
     finally:
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
-
+        # Cleanup ordenado
+        try:
+            await app.updater.stop()
+            await app.stop()
+            await app.shutdown()
+            logger.info("✅ Bot shut down cleanly")
+        except Exception as e:
+            logger.error(f"⚠️ Error en shutdown: {e}")
 
 def main():
     """Wrapper que usa asyncio.run() para crear el event loop correctamente"""
