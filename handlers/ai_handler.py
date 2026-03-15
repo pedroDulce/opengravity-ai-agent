@@ -12,9 +12,16 @@ import re
 import httpx
 from core.context_manager import ContextManager
 
-
 # Importar el cliente unificado
 from core.llm_client import LLMClient
+
+# Importar y configurar generador
+from core.project_generator import ProjectGenerator
+
+output_dir = os.getenv("OUTPUT_DIRECTORY", "C:/Users/pedrodulce/develop/generated")
+max_files = int(os.getenv("MAX_FILES_PER_PROJECT", "100"))
+timeout = int(os.getenv("PROJECT_GENERATION_TIMEOUT", "1800"))
+      
 
 logger = logging.getLogger(__name__)
 
@@ -1166,59 +1173,136 @@ FORMATO:
 # COMANDO: CREAR APLICACIÓN ANGULAR
 # ==============================
 
+
 async def cmd_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Comando /create [app_name] [descripción_o_api] - Crea app Angular autónomamente
-
-    El bot:
-    1. Crea proyecto Angular con ng new
-    2. Genera componentes/servicios desde descripción o API Swagger
-    3. Instala dependencias con npm
-    4. Inicia ng serve
-    5. Reporta cuando esté listo en http://localhost:4200
-
-    Uso:
-    /create petstore-app "Aplicación para la Petstore API de Swagger"
-    /create my-todo-app https://petstore.swagger.io/v2/swagger.json
     """
+    # 🛠️ DEBUG: Logging inmediato
+    logger.info(f"🔍 [DEBUG] cmd_create LLAMADO: {update.message.text if update.message else 'None'}")
+    
     if not update.message:
+        logger.error("❌ update.message es None")
         return
 
-    # 🔐 Seguridad: solo el dueño del chat
-    user_chat_id = update.effective_user.id
-    allowed_chat_id = int(os.getenv("TELEGRAM_USER_CHAT_ID", "0"))
-    if user_chat_id != allowed_chat_id:
-        await update.message.reply_text("❌ No tienes permiso para crear proyectos")
-        return
+    try:
+        # 🔐 Seguridad: solo el dueño del chat
+        user_chat_id = update.effective_user.id
+        allowed_chat_id = int(os.getenv("TELEGRAM_USER_CHAT_ID", "0"))
+        logger.info(f"🔐 Chat ID: {user_chat_id}, Allowed: {allowed_chat_id}")
+        
+        if user_chat_id != allowed_chat_id:
+            logger.warning(f"⚠️ Acceso denegado a Chat ID: {user_chat_id}")
+            await update.message.reply_text("❌ No tienes permiso para crear proyectos", parse_mode=None)
+            return
 
-    # Parsear argumentos
-    args = " ".join(context.args).strip()
-    if not args:
+        # Parsear argumentos
+        args = " ".join(context.args).strip()
+        logger.info(f"📋 Args recibidos: '{args}'")
+        
+        if not args:
+            await update.message.reply_text(
+                "💡 Uso: /create [nombre_app] [descripción_o_url_swagger]\n\n"
+                "Ejemplos:\n"
+                "• /create petstore-app 'Aplicación para Petstore API'\n"
+                "• /create my-app https://api.example.com/openapi.json",
+                parse_mode=None
+            )
+            return
+
+        # Separar nombre de app y descripción/API
+        parts = args.split(maxsplit=1)
+        app_name = parts[0]
+        spec_or_desc = parts[1] if len(parts) > 1 else None
+        logger.info(f"📝 App: '{app_name}', Spec/Desc: '{spec_or_desc[:50] if spec_or_desc else None}...'")
+
+        # Validar nombre
+        if not all(c.isalnum() or c in '-_' for c in app_name):
+            await update.message.reply_text("❌ Nombre de app inválido. Usa solo letras, números, guiones", parse_mode=None)
+            return
+
+        # ✅ PRIMER MENSAJE: Confirmar inicio
         await update.message.reply_text(
-            "💡 *Uso*: `/create [nombre_app] [descripción_o_url_swagger]`\n\n"
-            "Ejemplos:\n"
-            "• `/create petstore-app 'Aplicación para Petstore API'`\n"
-            "• `/create my-app https://api.example.com/openapi.json`",
+            f"🚀 Iniciando creación de '{app_name}'...\n\n"
+            f"⏱️ Esto puede tardar varios minutos. Te iré informando del progreso.\n"
+            f"📁 Se creará en: {os.getenv('OUTPUT_DIRECTORY', '...')}/{app_name}",
             parse_mode=None
         )
-        return
-
-    # Separar nombre de app y descripción/API
-    parts = args.split(maxsplit=1)
-    app_name = parts[0]
-    spec_or_desc = parts[1] if len(parts) > 1 else None
-
-    # Validar nombre
-    if not all(c.isalnum() or c in '-_' for c in app_name):
-        await update.message.reply_text("❌ Nombre de app inválido. Usa solo letras, números, guiones")
-        return
-
-    await update.message.reply_text(
-        f"🚀 *Iniciando creación de '{app_name}'...*\n\n"
-        f"⏱️ Esto puede tardar varios minutos. Te iré informando del progreso.\n"
-        f"📁 Se creará en: `{os.getenv('OUTPUT_DIRECTORY', '...')}/{app_name}`",
-        parse_mode=None
-    )
+        logger.info("✅ Mensaje de inicio enviado")
+        
+        # Callback para reportar progreso a Telegram
+        async def report_progress(message: str):
+            try:
+                await update.message.reply_text(f"🔧 {message}", parse_mode=None)
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                logger.warning(f"⚠️ No se pudo reportar progreso: {e}")
+          
+        logger.info(f"📁 Configuración: output_dir={output_dir}, max_files={max_files}, timeout={timeout}")
+        
+        generator = ProjectGenerator(output_dir, max_files, timeout)
+        generator.set_progress_callback(lambda msg: asyncio.create_task(report_progress(msg)))
+        
+        # Determinar si spec_or_desc es URL o descripción
+        api_spec = None
+        description = spec_or_desc
+        
+        if spec_or_desc and spec_or_desc.startswith(("http://", "https://")):
+            # Es una URL - intentar descargar la spec
+            try:
+                import httpx
+                logger.info(f"📥 Descargando API spec desde: {spec_or_desc[:50]}...")
+                async with httpx.AsyncClient(timeout=30) as client:
+                    response = await client.get(spec_or_desc)
+                    response.raise_for_status()
+                    api_spec = response.text
+                    description = f"Aplicación basada en API: {spec_or_desc}"
+                    await report_progress(f"📥 Especificación API descargada")
+            except Exception as e:
+                logger.warning(f"⚠️ No se pudo descargar la API spec: {e}")
+                await report_progress(f"⚠️ No se pudo descargar la API spec: {e}")
+                # Continuar solo con la descripción
+        
+        # Ejecutar generación
+        logger.info(f"🔧 Llamando a generator.create_angular_app('{app_name}', ...)")
+        result = await generator.create_angular_app(app_name, api_spec, description)
+        logger.info(f"🔧 Resultado: success={result['success']}, errors={result['errors']}")
+        
+        # Reportar resultado final
+        if result["success"]:
+            final_msg = (
+                f"🎉 ¡Aplicación '{app_name}' creada exitosamente!\n\n"
+                f"📁 Ubicación: {result['app_path']}\n"
+                f"🌐 URL: http://localhost:{result['port']}\n\n"
+                f"✅ La aplicación está corriendo. Ábrela en tu navegador.\n\n"
+                f"💡 Comandos útiles:\n"
+                f"• Para detener el servidor: Ctrl+C en la terminal donde corre ng serve\n"
+                f"• Para rebuild: cd {result['app_path']} && ng build\n"
+                f"• Para generar más componentes: ng generate component nombre"
+            )
+            await update.message.reply_text(final_msg, parse_mode=None)
+            logger.info("✅ Mensaje final de éxito enviado")
+        else:
+            errors = "\n".join(f"• {e}" for e in result["errors"])
+            await update.message.reply_text(
+                f"❌ Error creando '{app_name}':\n\n{errors}\n\n"
+                f"💡 Revisa los logs en la consola para más detalles.",
+                parse_mode=None
+            )
+            logger.error(f"❌ Generación fallida: {errors}")
+            
+    except ImportError as e:
+        logger.error(f"❌ ImportError en cmd_create: {e}", exc_info=True)
+        try:
+            await update.message.reply_text(f"❌ Error de import: {e}", parse_mode=None)
+        except:
+            pass
+    except Exception as e:
+        logger.error(f"❌ Excepción en cmd_create: {type(e).__name__}: {e}", exc_info=True)
+        try:
+            await update.message.reply_text(f"❌ Error: {type(e).__name__}: {e}", parse_mode=None)
+        except:
+            pass
 
 # Callback para reportar progreso a Telegram
 async def report_progress(message: str):
@@ -1227,13 +1311,6 @@ async def report_progress(message: str):
         await asyncio.sleep(0.5)  # Pequeña pausa para no saturar
     except Exception as e:
         logger.warning(f"⚠️ No se pudo reportar progreso: {e}")
-
-    # Importar y configurar generador
-    from core.project_generator import ProjectGenerator
-
-    output_dir = os.getenv("OUTPUT_DIRECTORY", "C:/Users/pedrodulce/develop/generated")
-    max_files = int(os.getenv("MAX_FILES_PER_PROJECT", "100"))
-    timeout = int(os.getenv("PROJECT_GENERATION_TIMEOUT", "1800"))
 
     generator = ProjectGenerator(output_dir, max_files, timeout)
     generator.set_progress_callback(lambda msg: asyncio.create_task(report_progress(msg)))

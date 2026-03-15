@@ -304,36 +304,41 @@ async def unknown_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❓ Comando no reconocido. Usa /help")
 
 
+# En opengravity_bot.py, añadir ANTES de create_application():
+
+async def cmd_diag(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handler mínimo de diagnóstico"""
+    logger.info("🎯 cmd_diag EJECUTADO")
+    await update.message.reply_text("✅ DIAG: El bot responde", parse_mode=None)
+
+
 # ============================================================
 # CREACIÓN DE LA APLICACIÓN
 # ============================================================
-
-# opengravity_bot.py - En create_application(), reemplazar la sección de HTTPXRequest:
 
 def create_application():
     """Crea la aplicación de Telegram con configuración resiliente"""
     
     # 🛡️ HTTPXRequest con timeouts y configuración de proxy robusta
+    # ✅ ESTO ES LO QUE FALTABA: definir la variable 'request'
     request = HTTPXRequest(
         connection_pool_size=20,
         connect_timeout=HTTP_CONNECT_TIMEOUT,
         read_timeout=HTTP_READ_TIMEOUT,
         write_timeout=HTTP_WRITE_TIMEOUT,
         pool_timeout=HTTP_POOL_TIMEOUT,
-        # Proxy ya configurado vía monkey-patch + ENV vars
     )
     
     logger.info("✅ HTTPXRequest creado con timeouts configurados")
 
-    # ✅ CORRECTO - Opción A: Sin configurar get_updates_request (hereda de .request)
+    # ✅ Ahora sí podemos usar 'request' en el builder
     app = (
         Application.builder()
         .token(BOT_TOKEN)
-        .request(request)
-        # ✅ get_updates_request heredará configuración de .request
+        .request(request)  # ← Ahora 'request' está definido
         .build()
     )
-
+    
     # ==============================
     # REGISTRO DE HANDLERS (ORDEN IMPORTANTE)
     # ==============================
@@ -342,39 +347,36 @@ def create_application():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("help", help_cmd))
-
+    
     # Handlers de IA
     app.add_handler(CommandHandler("ai", cmd_ai))
     app.add_handler(CommandHandler("dev", cmd_dev))
     app.add_handler(CommandHandler("explain", cmd_explain))
     app.add_handler(CommandHandler("debug", cmd_debug))
+    app.add_handler(CommandHandler("diag", cmd_diag))
+    
+    # Handlers de análisis de código
     app.add_handler(CommandHandler("review", cmd_review))
     app.add_handler(CommandHandler("analyze", cmd_analyze))
     app.add_handler(CommandHandler("improve", cmd_improve))
     app.add_handler(CommandHandler("angular", cmd_angular))
     
-    # 🆕 Handlers de conocimiento corporativo
+    # Handlers de conocimiento corporativo
     app.add_handler(CommandHandler("context", cmd_context))
     app.add_handler(CommandHandler("swagger", cmd_swagger))
     app.add_handler(CommandHandler("tests", cmd_tests))
+    
+    # 🆕 Handler de creación de proyectos (¡DEBE ir antes del catch-all!)
     app.add_handler(CommandHandler("create", cmd_create))
-
-    app.add_handler(MessageHandler(filters.TEXT, echo))    
-    app.add_handler(MessageHandler(filters.Regex(r"^/"), unknown_cmd))
     
-        # 🛠️ DEBUG: Listar handlers registrados
-    logger.info("📋 Handlers registrados:")
-    for group, handlers in app.handlers.items():
-        logger.info(f"  Grupo {group}:")
-        for handler in handlers:
-            cmd = getattr(handler, 'command', None)
-            filters_info = getattr(handler, 'filters', None)
-            logger.info(f"    - {type(handler).__name__}: command={cmd}, filters={filters_info}")
+    # 2️⃣ Handler para texto normal (echo) - solo si NO es comando
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
     
+    # 3️⃣ AL FINAL: Catch-all para comandos no reconocidos
+    app.add_handler(MessageHandler(filters.COMMAND, unknown_cmd))
+    
+    logger.info("✅ Handlers registrados en orden correcto")
     return app
-
-
-# opengravity_bot.py - Añadir esta función antes de run_bot_async:
 
 async def run_with_retry(func, max_retries: int = POLLING_MAX_RETRIES, 
                          delay: float = POLLING_RETRY_DELAY, *args, **kwargs):
