@@ -31,6 +31,7 @@ class ContextManager:
         self._index: Dict[str, List[Path]] = {
             "angular-guidelines": [],
             "api-contracts": [],
+            "atom-guidelines": [],
             "examples": [],
             "general": []
         }
@@ -41,6 +42,7 @@ class ContextManager:
         else:
             logger.warning(f"⚠️ Carpeta knowledge no encontrada: {self.knowledge_path}")
     
+
     def _build_index(self):
         """Indexa todos los documentos en la carpeta knowledge/"""
         if not self.knowledge_path.exists():
@@ -51,25 +53,27 @@ class ContextManager:
             if category_path.exists():
                 for file in category_path.rglob("*"):
                     if file.suffix in [".md", ".ts", ".json", ".yaml", ".yml", ".txt"]:
-                        if file.name.startswith("."):  # Ignorar archivos ocultos
+                        if file.name.startswith("."):
                             continue
                         self._index[category].append(file)
-                        # Cargar contenido en caché
                         try:
                             content = file.read_text(encoding="utf-8")
                             self._cache[str(file)] = content
                             logger.debug(f"📄 Cargado: {file.relative_to(self.knowledge_path)}")
                         except Exception as e:
                             logger.warning(f"⚠️ No se pudo cargar {file}: {e}")
-    
+
+    # core/context_manager.py - Reemplazar TODO el método get_context:
+
     def get_context(self, query: str, category: Optional[str] = None, 
                     max_tokens: int = 3000) -> str:
         """
         Recupera contexto relevante para una consulta BUSCANDO EN EL CONTENIDO de los documentos.
+        Prioriza documentos ATOM cuando la query menciona componentes, lib-, material, etc.
         
         Args:
             query: La consulta del usuario (para búsqueda por palabras clave)
-            category: Filtrar por categoría (angular-guidelines, api-contracts, examples, general)
+            category: Filtrar por categoría (angular-guidelines, atom-guidelines, api-contracts, examples, general)
             max_tokens: Límite aproximado de tokens para el contexto devuelto
             
         Returns:
@@ -78,6 +82,12 @@ class ContextManager:
         relevant_docs = []
         query_lower = query.lower()
         query_words = set(query_lower.split())
+        
+        # 🔍 Detectar si la query menciona conceptos ATOM
+        is_atom_query = any(kw in query_lower for kw in [
+            "component", "lib-", "atom", "material", "standalone", 
+            "onpush", "inject", "signal", "computed", "m3-theme", "muface"
+        ])
         
         # Categorías a buscar
         categories_to_search = [category] if category else list(self._index.keys())
@@ -94,40 +104,53 @@ class ContextManager:
                 for word in query_words:
                     if len(word) > 3:  # Ignorar palabras muy cortas
                         if word in content_lower:
-                            score += content_lower.count(word)
+                            score += content_lower.count(word) * 2  # Doble peso por coincidencia
                 
                 # Bonus por coincidencia en nombre de archivo
                 if any(word in file_path.name.lower() for word in query_words):
-                    score += 5
+                    score += 10
                 
-                # Bonus por categoría específica
+                # 🎯 Bonus CRÍTICO: Si es query ATOM y el documento es de atom-guidelines
+                if is_atom_query and cat == "atom-guidelines":
+                    score += 50  # Prioridad máxima para guías ATOM
+                
+                # Bonus por categoría específica solicitada
                 if category and cat == category:
-                    score += 3
+                    score += 5
                 
                 # Si hay coincidencias, añadir a relevantes
                 if score > 0:
-                    relevant_docs.append((file_path, content, score))
+                    relevant_docs.append((file_path, content, score, cat))
+        
+        # 🎯 Si es query ATOM y no hay resultados, forzar inclusión de guías ATOM
+        if is_atom_query and not relevant_docs:
+            for file_path in self._index.get("atom-guidelines", []):
+                content = self._cache.get(str(file_path), "")
+                if content:
+                    relevant_docs.append((file_path, content, 100, "atom-guidelines"))  # Score máximo
         
         # Ordenar por relevancia (score más alto primero)
         relevant_docs.sort(key=lambda x: x[2], reverse=True)
         
-        # Si no hay resultados, devolver documentos de angular-guidelines como fallback
+        # Si aún no hay resultados, fallback a angular-guidelines y examples
         if not relevant_docs:
             for file_path in self._index.get("angular-guidelines", [])[:2]:
                 content = self._cache.get(str(file_path), "")
-                relevant_docs.append((file_path, content, 0))
+                if content:
+                    relevant_docs.append((file_path, content, 1, "angular-guidelines"))
             for file_path in self._index.get("examples", [])[:2]:
                 content = self._cache.get(str(file_path), "")
-                relevant_docs.append((file_path, content, 0))
+                if content:
+                    relevant_docs.append((file_path, content, 1, "examples"))
         
         # Formatear contexto para el prompt
         context_parts = []
         total_chars = 0
         max_chars = max_tokens * 4  # Aprox: 1 token ≈ 4 chars
         
-        for file_path, content, score in relevant_docs:
+        for file_path, content, score, cat in relevant_docs:
             rel_path = file_path.relative_to(self.knowledge_path)
-            header = f"\n\n--- 📄 {rel_path} (relevancia: {score}) ---\n"
+            header = f"\n\n--- 📄 {rel_path} [{cat}] (relevancia: {score}) ---\n"
             
             if total_chars + len(header) + len(content) > max_chars:
                 # Truncar contenido si excede el límite
@@ -144,13 +167,27 @@ class ContextManager:
         if not context_parts:
             return "⚠️ No se encontró contexto relevante en la base de conocimiento."
         
+        # 🎯 Instrucción final FORZANDO uso de contexto ATOM si está presente
+        atom_instruction = ""
+        if is_atom_query and any(cat == "atom-guidelines" for _, _, _, cat in relevant_docs):
+            atom_instruction = """
+    🔴 INSTRUCCIÓN CRÍTICA - COMPONENTES ATOM:
+    El código generado DEBE seguir EXACTAMENTE las reglas ATOM:
+    • Selector con prefijo "lib-", clase con prefijo "Lib"
+    • standalone: true, changeDetection: ChangeDetectionStrategy.OnPush
+    • Inyección vía inject(), estado con signal()/computed()
+    • Estilos en .scss separado, tema M3 con @muface-lib
+    • Lifecycle hooks: OnInit, AfterViewInit, OnDestroy
+    """
+        
         return "\n".join([
             "📚 CONTEXTO CORPORATIVO DISPONIBLE:",
             "El siguiente material de referencia debe guiar tu respuesta:",
             *context_parts,
+            atom_instruction,
             "\n\n🎯 INSTRUCCIÓN: Usa este contexto para generar código que siga EXACTAMENTE las convenciones corporativas mostradas arriba."
         ])
-    
+
     def reload(self):
         """Recarga todos los documentos desde disco"""
         self._cache.clear()

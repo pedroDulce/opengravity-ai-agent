@@ -253,47 +253,37 @@ class ProjectGenerator:
             )
 
             # Construir prompt para generar estructura de archivos
-            prompt = f"""Eres un arquitecto Angular experto. Tu tarea es generar la estructura completa de archivos para una aplicación Angular.
+            prompt = f"""Eres un arquitecto Angular experto en la librería corporativa ATOM.
 
-{'ESPECIFICACIÓN API:' if api_spec else 'DESCRIPCIÓN DE LA APP:'}
-{api_spec[:4000] if api_spec else description}
+REGLAS OBLIGATORIAS - NO OMITIR:
+1. TODOS los componentes deben seguir el patrón ATOM:
+   - Selector con prefijo "lib-"
+   - Clase con prefijo "Lib"
+   - standalone: true
+   - changeDetection: ChangeDetectionStrategy.OnPush
+   - Inyección de servicios vía inject()
+   - Usar signal()/computed() para estado
+   - Implementar OnInit, AfterViewInit, OnDestroy
 
-{angular_context if angular_context else ''}
+2. ESTILOS:
+   - En styles.scss global: @use '@angular/material' as mat; @use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme;
+   - En componentes: estilos acotados con :host, sin CSS inline
 
-INSTRUCCIONES:
-1. Genera la lista COMPLETA de archivos que debe tener la aplicación
-2. Para CADA archivo, proporciona:
-   - Ruta relativa desde src/app/
-   - Contenido completo del archivo en TypeScript/HTML/SCSS
-3. Sigue las convenciones corporativas del contexto
+3. DTOs:
+   - Usar tipos genéricos <T> en clases base
+   - Inputs encapsulados en objeto de estructura
 
-FORMATO DE RESPUESTA (ESTRICTO):
-Usa este formato exacto para cada archivo:
+CONTEXTO CORPORATIVO ATOM:
+{atom_context}
 
+TU TAREA: Generar código Angular para: {description}
+
+FORMATO DE RESPUESTA:
 === FILE: src/app/path/to/file.ts ===
 ```typescript
-// contenido del archivo
+// código que SIGUE LAS REGLAS ATOM
 ```
-
-=== FILE: src/app/path/to/file.html ===
-```html
-<!-- contenido del archivo -->
-```
-
-=== FILE: src/app/path/to/file.scss ===
-```scss
-// contenido del archivo
-```
-
-Genera como mínimo:
-- app.module.ts con imports necesarios
-- app-routing.module.ts con rutas básicas
-- Un componente principal (ej: pet-list, store-home)
-- Un servicio para consumir la API
-- Interfaces TypeScript para los modelos de la API
-
-NO incluyas explicaciones, solo los archivos en el formato especificado."""
-
+"""
             response = await asyncio.to_thread(client.generate, prompt, timeout=180)
 
             # Parsear respuesta y escribir archivos
@@ -359,7 +349,7 @@ NO incluyas explicaciones, solo los archivos en el formato especificado."""
                 cwd=str(app_path),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=600  # 10 minutos
+                timeout=1200  # 20 minutos
             )
             
             if process.returncode != 0:
