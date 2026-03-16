@@ -138,106 +138,6 @@ class ProjectGenerator:
 
         return result
 
-    def _validate_app_name(self, name: str) -> bool:
-        """Valida que el nombre de app sea seguro para usar en filesystem y Angular CLI"""
-        if not name:
-            return False
-        # Solo letras, números, guiones y guiones bajos
-        if not all(c.isalnum() or c in '-_' for c in name):
-            return False
-        # No empezar con número o guión
-        if name[0].isdigit() or name.startswith('-'):
-            return False
-        # Longitud razonable
-        if len(name) > 50:
-            return False
-        return True
-
-    
-    def _create_angular_project(self, app_path: Path, app_name: str) -> bool:
-        """Crea proyecto Angular base usando ng new (versión corregida para Windows)"""
-        self._log_progress(f"📦 Creando proyecto Angular '{app_name}'...")
-        
-        try:
-            import subprocess
-            import shutil
-            
-            # 🛠️ CRÍTICO: Encontrar la ruta completa de 'ng' en Windows
-            # Primero intentar con shutil.which (busca en PATH)
-            ng_path = shutil.which("ng")
-            
-            # Si no lo encuentra, usar ruta típica de npm global en Windows
-            if not ng_path:
-                ng_cmd_path = Path.home() / "AppData" / "Roaming" / "npm" / "ng.cmd"
-                if ng_cmd_path.exists():
-                    ng_path = str(ng_cmd_path)
-                else:
-                    # Último intento: buscar en PATH manualmente
-                    env_path = os.environ.get("PATH", "")
-                    for path_dir in env_path.split(";"):
-                        candidate = Path(path_dir) / "ng.cmd"
-                        if candidate.exists():
-                            ng_path = str(candidate)
-                            break
-            
-            if not ng_path:
-                logger.error("❌ No se encontró 'ng' en PATH ni en rutas típicas de npm")
-                logger.error(f"💡 PATH actual: {os.environ.get('PATH', '')[:200]}...")
-                return False
-            
-            logger.info(f"✅ Usando Angular CLI en: {ng_path}")
-            
-            # Preparar entorno con PATH que incluya npm global
-            env = os.environ.copy()
-            npm_global_path = str(Path.home() / "AppData" / "Roaming" / "npm")
-            if npm_global_path not in env.get("PATH", ""):
-                env["PATH"] = npm_global_path + ";" + env.get("PATH", "")
-            
-            # Comando ng new con ruta completa al ejecutable
-            cmd = [
-                ng_path,  # ← Usar ruta completa en lugar de solo "ng"
-                "new", app_name,
-                "--routing", "true",
-                "--style", "scss",
-                "--skip-git", "true",
-                "--minimal", "false"
-            ]
-            
-            # Ejecutar con subprocess.run (síncrono para evitar NotImplementedError)
-            process = subprocess.run(
-                cmd,
-                cwd=str(self.output_dir),
-                env=env,
-                input=b'Y\n',  # Responder 'Y' a prompts de ng new
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=300,  # 5 minutos timeout
-                shell=False   # ← Importante: False para seguridad
-            )
-            
-            # Logging mejorado para debug
-            if process.returncode != 0:
-                stderr_text = process.stderr.decode('utf-8', errors='ignore')[:500]
-                stdout_text = process.stdout.decode('utf-8', errors='ignore')[:500]
-                logger.error(f"❌ ng new falló (code={process.returncode}):")
-                logger.error(f"   STDOUT: {stdout_text}")
-                logger.error(f"   STDERR: {stderr_text}")
-                return False
-            
-            self._log_progress(f"✅ Proyecto Angular creado en {app_path}")
-            return True
-            
-        except subprocess.TimeoutExpired:
-            logger.error("⏰ Timeout en ng new (300s)")
-            return False
-        except FileNotFoundError as e:
-            logger.error(f"❌ Angular CLI no encontrado: {e}")
-            logger.error("💡 Verifica: ng version")
-            return False
-        except Exception as e:
-            logger.error(f"❌ Error en _create_angular_project: {type(e).__name__}: {e}", exc_info=True)
-            return False
-
     async def _generate_app_code(self, app_path: Path, api_spec: Optional[str], 
                               description: Optional[str]) -> bool:
         """Genera componentes, servicios y código de la app usando la IA"""
@@ -334,6 +234,138 @@ class ProjectGenerator:
             
         except Exception as e:
             logger.error(f"❌ Error en _generate_app_code: {e}", exc_info=True)
+            return False
+
+
+    def _validate_app_name(self, name: str) -> bool:
+        """Valida que el nombre de app sea seguro para usar en filesystem y Angular CLI"""
+        if not name:
+            return False
+        # Solo letras, números, guiones y guiones bajos
+        if not all(c.isalnum() or c in '-_' for c in name):
+            return False
+        # No empezar con número o guión
+        if name[0].isdigit() or name.startswith('-'):
+            return False
+        # Longitud razonable
+        if len(name) > 50:
+            return False
+        return True
+
+    
+    def _create_angular_project(self, app_path: Path, app_name: str) -> bool:
+        """Crea proyecto Angular base usando ng new con --skip-install"""
+        self._log_progress(f"📦 Creando proyecto Angular '{app_name}'...")
+        
+        try:
+            import subprocess
+            import shutil
+            
+            # 🛠️ Encontrar la ruta completa de 'ng' en Windows
+            ng_path = shutil.which("ng")
+            
+            if not ng_path:
+                ng_cmd_path = Path.home() / "AppData" / "Roaming" / "npm" / "ng.cmd"
+                if ng_cmd_path.exists():
+                    ng_path = str(ng_cmd_path)
+                else:
+                    env_path = os.environ.get("PATH", "")
+                    for path_dir in env_path.split(";"):
+                        candidate = Path(path_dir) / "ng.cmd"
+                        if candidate.exists():
+                            ng_path = str(candidate)
+                            break
+            
+            if not ng_path:
+                logger.error("❌ No se encontró 'ng' en PATH ni en rutas típicas de npm")
+                return False
+            
+            logger.info(f"✅ Usando Angular CLI en: {ng_path}")
+            
+            # Preparar entorno con PATH que incluya npm global
+            env = os.environ.copy()
+            npm_global_path = str(Path.home() / "AppData" / "Roaming" / "npm")
+            if npm_global_path not in env.get("PATH", ""):
+                env["PATH"] = npm_global_path + ";" + env.get("PATH", "")
+            
+            # 🛠️ CRÍTICO: Usar --skip-install para evitar npm install automático de ng new
+            # Luego instalaremos manualmente con nuestro .npmrc configurado para Nexus/ATOM
+            cmd = [
+                ng_path,
+                "new", app_name,
+                "--routing", "true",
+                "--style", "scss",
+                "--skip-git", "true",
+                "--minimal", "false",
+                "--skip-install", "true"  # ← ¡Esto evita el npm install automático!
+            ]
+            
+            logger.info(f"🔧 Ejecutando: {' '.join(cmd)}")
+            
+            # Ejecutar ng new con --skip-install
+            process = subprocess.run(
+                cmd,
+                cwd=str(self.output_dir),
+                env=env,
+                input=b'Y\n',  # Responder 'Y' a prompts de ng new
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=300,  # 5 minutos
+                shell=False
+            )
+            
+            if process.returncode != 0:
+                stderr_text = process.stderr.decode('utf-8', errors='ignore')[:500]
+                stdout_text = process.stdout.decode('utf-8', errors='ignore')[:500]
+                logger.error(f"❌ ng new falló (code={process.returncode}):")
+                logger.error(f"   STDOUT: {stdout_text}")
+                logger.error(f"   STDERR: {stderr_text}")
+                return False
+            
+            # 🛠️ Verificar que package.json fue creado
+            package_json = app_path / "package.json"
+            if not package_json.exists():
+                logger.error(f"❌ ng new completó pero package.json no existe en {app_path}")
+                return False
+            
+            # 🛠️ Crear .npmrc con configuración ATOM/Nexus ANTES de npm install manual
+            npmrc_path = app_path / ".npmrc"
+            npmrc_content = """# Registry principal (proxy de npmjs.org)
+    registry=https://artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/
+
+    # Autenticación para registry principal
+    //artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/:_auth=bXVmYWNlOmF0b20yMDI0
+
+    # Registry específico para @muface-lib (librería ATOM)
+    @muface-lib:registry=https://artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/
+
+    # Autenticación para registry ATOM
+    //artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/:_auth=bXVmYWNlOmF0b20yMDI0
+
+    # Configuración de conexión
+    strict-ssl=false
+    fetch-retries=10
+    fetch-retry-mintimeout=20000
+    fetch-retry-maxtimeout=600000
+    fetch-timeout=300000
+
+    # legacy-peer-deps para compatibilidad con Angular Material + ATOM
+    legacy-peer-deps=true
+    """
+            npmrc_path.write_text(npmrc_content, encoding='utf-8')
+            logger.info(f"✅ .npmrc configurado para Nexus/ATOM en {npmrc_path}")
+            
+            self._log_progress(f"✅ Proyecto Angular creado en {app_path}")
+            return True
+            
+        except subprocess.TimeoutExpired:
+            logger.error("⏰ Timeout en ng new (300s)")
+            return False
+        except FileNotFoundError as e:
+            logger.error(f"❌ Angular CLI no encontrado: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Error en _create_angular_project: {type(e).__name__}: {e}", exc_info=True)
             return False
 
 
@@ -456,108 +488,50 @@ class ProjectGenerator:
         
         return files_written
 
+
     def _install_dependencies(self, app_path: Path) -> bool:
-        """Instala dependencias con npm install (síncrono) para entorno ATOM/Nexus"""
+        """Instala dependencias con npm install (usando .npmrc ya configurado)"""
         self._log_progress("📦 Instalando dependencias ATOM (puede tardar 15-20 min)...")
         
         try:
             import subprocess
             import shutil
             
-            # 🛠️ Encontrar la ruta completa de 'npm' en Windows
+            # Encontrar npm
             npm_path = shutil.which("npm")
-            
             if not npm_path:
                 npm_cmd_path = Path.home() / "AppData" / "Roaming" / "npm" / "npm.cmd"
                 if npm_cmd_path.exists():
                     npm_path = str(npm_cmd_path)
-                else:
-                    env_path = os.environ.get("PATH", "")
-                    for path_dir in env_path.split(";"):
-                        candidate = Path(path_dir) / "npm.cmd"
-                        if candidate.exists():
-                            npm_path = str(candidate)
-                            break
             
             if not npm_path:
-                logger.error("❌ No se encontró 'npm' en PATH ni en rutas típicas")
+                logger.error("❌ No se encontró 'npm'")
                 return False
             
             logger.info(f"✅ Usando npm en: {npm_path}")
             
-            # Preparar entorno con PATH que incluya npm global
+            # Preparar entorno
             env = os.environ.copy()
             npm_global_path = str(Path.home() / "AppData" / "Roaming" / "npm")
             if npm_global_path not in env.get("PATH", ""):
                 env["PATH"] = npm_global_path + ";" + env.get("PATH", "")
             
-            # 🛠️ CRÍTICO: Crear .npmrc con configuración ATOM/Nexus completa
-            # (esto reemplaza los argumentos --//...:_auth= que no funcionan en CLI)
-            npmrc_path = app_path / ".npmrc"
-            original_npmrc = None
-            
-            if npmrc_path.exists():
-                original_npmrc = npmrc_path.read_text(encoding='utf-8')
-            
-            # Configuración completa para Nexus + ATOM (igual que tu Dockerfile)
-            npmrc_content = """# Registry principal (proxy de npmjs.org)
-    registry=https://artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/
-
-    # Autenticación para registry principal
-    //artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/:_auth=bXVmYWNlOmF0b20yMDI0
-
-    # Registry específico para @muface-lib (librería ATOM)
-    @muface-lib:registry=https://artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/
-
-    # Autenticación para registry ATOM
-    //artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/:_auth=bXVmYWNlOmF0b20yMDI0
-
-    # Configuración de conexión
-    strict-ssl=false
-    fetch-retries=10
-    fetch-retry-mintimeout=20000
-    fetch-retry-maxtimeout=600000
-    fetch-timeout=300000
-
-    # legacy-peer-deps para compatibilidad con Angular Material + ATOM
-    legacy-peer-deps=true
-    """
-            npmrc_path.write_text(npmrc_content, encoding='utf-8')
-            logger.info(f"✅ .npmrc configurado para Nexus/ATOM en {npmrc_path}")
-            
-            # 🛠️ CORRECTO: Cada argumento como elemento separado de la lista
-            cmd = [
-                npm_path,
-                "install",
-                "--legacy-peer-deps",  # Para compatibilidad con dependencias de ATOM
-                "--verbose",            # Logging detallado
-                "--no-progress"         # Evita problemas de render en subprocess
-            ]
-            
+            # Ejecutar npm install (el .npmrc ya está en la carpeta del proyecto)
+            cmd = [npm_path, "install", "--legacy-peer-deps", "--no-progress"]
             logger.info(f"🔧 Ejecutando: {' '.join(cmd)}")
             
-            # Ejecutar npm install
             process = subprocess.run(
-                cmd,  # ← Lista de argumentos separados, NO una cadena
+                cmd,
                 cwd=str(app_path),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=1800,  # 30 minutos para proxy corporativo
+                timeout=1800,  # 30 minutos
                 env=env
             )
             
-            # Restaurar .npmrc original si existía
-            if original_npmrc is not None:
-                npmrc_path.write_text(original_npmrc, encoding='utf-8')
-            else:
-                npmrc_path.unlink(missing_ok=True)
-            
             if process.returncode != 0:
                 stderr_text = process.stderr.decode('utf-8', errors='ignore')[:500]
-                stdout_text = process.stdout.decode('utf-8', errors='ignore')[:200]
-                logger.error(f"❌ npm install falló (code={process.returncode}):")
-                logger.error(f"   STDOUT: {stdout_text}")
-                logger.error(f"   STDERR: {stderr_text}")
+                logger.error(f"❌ npm install falló: {stderr_text}")
                 return False
             
             self._log_progress("✅ Dependencias ATOM instaladas")
@@ -566,13 +540,11 @@ class ProjectGenerator:
         except subprocess.TimeoutExpired:
             logger.error("⏰ Timeout en npm install (1800s)")
             return False
-        except FileNotFoundError as e:
-            logger.error(f"❌ npm no encontrado: {e}")
-            return False
         except Exception as e:
             logger.error(f"❌ Error en _install_dependencies: {e}", exc_info=True)
             return False
     
+
     def _start_dev_server(self, app_path: Path) -> Optional[int]:
         """Inicia ng serve en background (síncrono con Popen)"""
         port = 4200
