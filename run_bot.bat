@@ -2,7 +2,7 @@
 :: run_bot.bat - Auto-restart del bot si se cierra inesperadamente
 
 :restart
-echo [%DATE% %TIME%] 🤖 Iniciando OpenGravity Bot...
+echo [%DATE% %TIME%] Iniciando OpenGravity Bot...
 python opengravity_bot.py
 set EXIT_CODE=%ERRORLEVEL%
 
