@@ -338,37 +338,63 @@ FORMATO DE RESPUESTA:
         return files_written
 
     def _install_dependencies(self, app_path: Path) -> bool:
-        """Instala dependencias con npm install (síncrono)"""
-        self._log_progress("📦 Instalando dependencias...")
+        """Instala dependencias con npm install"""
+        self._log_progress("📦 Instalando dependencias (puede tardar 15-20 min)...")
         
         try:
             import subprocess
             
+            # 🛠️ Preparar entorno con configuración de npm para proxy público
+            env = os.environ.copy()
+            
+            # Crear .npmrc temporal en la carpeta del proyecto para usar registry público
+            npmrc_path = app_path / ".npmrc"
+            original_npmrc = None
+            
+            # Guardar .npmrc existente si hay
+            if npmrc_path.exists():
+                original_npmrc = npmrc_path.read_text(encoding='utf-8')
+            
+            # Escribir configuración temporal para registry público
+            npmrc_content = """registry=https://registry.npmjs.org/
+    strict-ssl=false
+    fetch-retries=10
+    fetch-retry-mintimeout=20000
+    fetch-retry-maxtimeout=600000
+    """
+            npmrc_path.write_text(npmrc_content, encoding='utf-8')
+            
+            # Ejecutar npm install con timeout extendido
             process = subprocess.run(
-                ["npm", "install"],
+                ["npm", "install --legacy-peer-deps --verbose --strict-ssl=false --registry=https://artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/ --//artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/:_auth=bXVmYWNlOmF0b20yMDI0 --@muface-lib:registry=https://artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/ --//artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/:_auth=bXVmYWNlOmF0b20yMDI0"],
                 cwd=str(app_path),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=1200  # 20 minutos
+                timeout=1800,  # 30 minutos
+                env=env
             )
             
+            # Restaurar .npmrc original si existía
+            if original_npmrc is not None:
+                npmrc_path.write_text(original_npmrc, encoding='utf-8')
+            else:
+                npmrc_path.unlink(missing_ok=True)
+            
             if process.returncode != 0:
-                logger.error(f"❌ npm install falló: {process.stderr.decode()[:500]}")
+                stderr_text = process.stderr.decode('utf-8', errors='ignore')[:500]
+                logger.error(f"❌ npm install falló: {stderr_text}")
                 return False
             
             self._log_progress("✅ Dependencias instaladas")
             return True
             
         except subprocess.TimeoutExpired:
-            logger.error("⏰ Timeout en npm install")
-            return False
-        except FileNotFoundError:
-            logger.error("❌ npm no encontrado. Instala Node.js")
+            logger.error("⏰ Timeout en npm install (1800s)")
             return False
         except Exception as e:
             logger.error(f"❌ Error en _install_dependencies: {e}")
             return False
-
+            
     def _start_dev_server(self, app_path: Path) -> Optional[int]:
         """Inicia ng serve en background (síncrono con Popen)"""
         port = 4200
