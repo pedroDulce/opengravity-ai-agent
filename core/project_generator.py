@@ -105,8 +105,8 @@ class ProjectGenerator:
                     result["errors"].append("Error generando código de la app")
                     return result
 
-            # Paso 3: Instalar dependencias adicionales si es necesario
-            if not await self._install_dependencies(app_path):
+            # ✅ CORRECTO (sin await, es método síncrono):
+            if not self._install_dependencies(app_path):            
                 result["errors"].append("Error instalando dependencias")
                 return result
 
@@ -349,24 +349,50 @@ class ProjectGenerator:
         return files_written
 
     def _install_dependencies(self, app_path: Path) -> bool:
-        """Instala dependencias con npm install"""
+        """Instala dependencias con npm install (síncrono)"""
         self._log_progress("📦 Instalando dependencias (puede tardar 15-20 min)...")
         
         try:
             import subprocess
+            import shutil
             
-            # 🛠️ Preparar entorno con configuración de npm para proxy público
+            # 🛠️ CRÍTICO: Encontrar la ruta completa de 'npm' en Windows
+            npm_path = shutil.which("npm")
+            
+            if not npm_path:
+                # Intentar ruta típica de npm global en Windows
+                npm_cmd_path = Path.home() / "AppData" / "Roaming" / "npm" / "npm.cmd"
+                if npm_cmd_path.exists():
+                    npm_path = str(npm_cmd_path)
+                else:
+                    # Último intento: buscar en PATH manualmente
+                    env_path = os.environ.get("PATH", "")
+                    for path_dir in env_path.split(";"):
+                        candidate = Path(path_dir) / "npm.cmd"
+                        if candidate.exists():
+                            npm_path = str(candidate)
+                            break
+            
+            if not npm_path:
+                logger.error("❌ No se encontró 'npm' en PATH ni en rutas típicas")
+                logger.error(f"💡 PATH actual: {os.environ.get('PATH', '')[:300]}...")
+                return False
+            
+            logger.info(f"✅ Usando npm en: {npm_path}")
+            
+            # Preparar entorno con PATH que incluya npm global
             env = os.environ.copy()
+            npm_global_path = str(Path.home() / "AppData" / "Roaming" / "npm")
+            if npm_global_path not in env.get("PATH", ""):
+                env["PATH"] = npm_global_path + ";" + env.get("PATH", "")
             
-            # Crear .npmrc temporal en la carpeta del proyecto para usar registry público
+            # Crear .npmrc temporal para usar registry público (evita error 504 de Nexus)
             npmrc_path = app_path / ".npmrc"
             original_npmrc = None
             
-            # Guardar .npmrc existente si hay
             if npmrc_path.exists():
                 original_npmrc = npmrc_path.read_text(encoding='utf-8')
             
-            # Escribir configuración temporal para registry público
             npmrc_content = """registry=https://registry.npmjs.org/
     strict-ssl=false
     fetch-retries=10
@@ -375,13 +401,14 @@ class ProjectGenerator:
     """
             npmrc_path.write_text(npmrc_content, encoding='utf-8')
             
-            # Ejecutar npm install con timeout extendido
+            # Ejecutar npm install con ruta completa al ejecutable
             process = subprocess.run(
-                ["npm", "install --legacy-peer-deps --verbose --strict-ssl=false --registry=https://artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/ --//artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/:_auth=bXVmYWNlOmF0b20yMDI0 --@muface-lib:registry=https://artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/ --//artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/:_auth=bXVmYWNlOmF0b20yMDI0"],
+                [npm_path, "install"],  # Usamos ruta completa, no solo "npm"
+                #[npm_path, "install --legacy-peer-deps --verbose --strict-ssl=false --registry=https://artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/ --//artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/:_auth=bXVmYWNlOmF0b20yMDI0 --@muface-lib:registry=https://artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/ --//artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/:_auth=bXVmYWNlOmF0b20yMDI0"],
                 cwd=str(app_path),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=1800,  # 30 minutos
+                timeout=1800,  # 30 minutos para proxy corporativo
                 env=env
             )
             
@@ -402,9 +429,14 @@ class ProjectGenerator:
         except subprocess.TimeoutExpired:
             logger.error("⏰ Timeout en npm install (1800s)")
             return False
-        except Exception as e:
-            logger.error(f"❌ Error en _install_dependencies: {e}")
+        except FileNotFoundError as e:
+            logger.error(f"❌ npm no encontrado: {e}")
             return False
+        except Exception as e:
+            logger.error(f"❌ Error en _install_dependencies: {e}", exc_info=True)
+            return False
+
+    
             
     def _start_dev_server(self, app_path: Path) -> Optional[int]:
         """Inicia ng serve en background (síncrono con Popen)"""

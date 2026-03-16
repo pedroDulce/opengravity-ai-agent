@@ -17,6 +17,8 @@
 /context search componente standalone
 /create mi-app "Descripción de la app"
 
+/create test-demo "App Angular demo"
+
 
 Ejemplo de mensaje en Telegram para crear una app Angular con web atom componentes:
 
