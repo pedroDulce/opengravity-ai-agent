@@ -148,89 +148,167 @@ class ProjectGenerator:
         return True
 
     
-    def _create_angular_project(self, app_path: Path, app_name: str) -> bool:
-        """Crea proyecto Angular base usando ng new (versión corregida para Windows)"""
-        self._log_progress(f"📦 Creando proyecto Angular '{app_name}'...")
+    async def cmd_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """
+        Comando /create [app_name] [descripción_o_api] - Crea app Angular autónomamente
+        Ahora soporta descripciones multi-línea y entre comillas correctamente.
+        """
+        # 🛠️ DEBUG: Logging inmediato
+        logger.info(f"🔍 [DEBUG] cmd_create LLAMADO: {update.message.text if update.message else 'None'}")
         
+        if not update.message or not update.message.text:
+            logger.error("❌ update.message o message.text es None")
+            return
+
         try:
-            import subprocess
-            import shutil
+            # 🔐 Seguridad: solo el dueño del chat
+            user_chat_id = update.effective_user.id
+            allowed_chat_id = int(os.getenv("TELEGRAM_USER_CHAT_ID", "0"))
+            logger.info(f"🔐 Chat ID: {user_chat_id}, Allowed: {allowed_chat_id}")
             
-            # 🛠️ CRÍTICO: Encontrar la ruta completa de 'ng' en Windows
-            # Primero intentar con shutil.which (busca en PATH)
-            ng_path = shutil.which("ng")
+            if user_chat_id != allowed_chat_id:
+                logger.warning(f"⚠️ Acceso denegado a Chat ID: {user_chat_id}")
+                await update.message.reply_text("❌ No tienes permiso para crear proyectos", parse_mode=None)
+                return
+
+            # 🛠️ CORRECCIÓN CLAVE: Usar update.message.text en lugar de context.args
+            # para preservar comillas, saltos de línea y formato completo
+            full_text = update.message.text.strip()
             
-            # Si no lo encuentra, usar ruta típica de npm global en Windows
-            if not ng_path:
-                ng_cmd_path = Path.home() / "AppData" / "Roaming" / "npm" / "ng.cmd"
-                if ng_cmd_path.exists():
-                    ng_path = str(ng_cmd_path)
-                else:
-                    # Último intento: buscar en PATH manualmente
-                    env_path = os.environ.get("PATH", "")
-                    for path_dir in env_path.split(";"):
-                        candidate = Path(path_dir) / "ng.cmd"
-                        if candidate.exists():
-                            ng_path = str(candidate)
-                            break
+            # Remover el comando /create (puede tener prefijo @botname)
+            if full_text.startswith("/create"):
+                content = full_text[7:].strip()  # Remover "/create"
+            elif "/create@" in full_text:
+                # Manejar /create@BotName
+                content = full_text.split("/create@", 1)[1]
+                content = content.split(" ", 1)[1] if " " in content else ""
+            else:
+                content = full_text
             
-            if not ng_path:
-                logger.error("❌ No se encontró 'ng' en PATH ni en rutas típicas de npm")
-                logger.error(f"💡 PATH actual: {os.environ.get('PATH', '')[:200]}...")
-                return False
+            logger.info(f"📋 Contenido después de remover /create: '{content[:200]}...'")
             
-            logger.info(f"✅ Usando Angular CLI en: {ng_path}")
+            if not content:
+                await update.message.reply_text(
+                    "💡 Uso: /create [nombre_app] [descripción_o_url_swagger]\n\n"
+                    "Ejemplos:\n"
+                    "• /create petstore-app 'Aplicación para Petstore API'\n"
+                    "• /create my-app https://api.example.com/openapi.json\n\n"
+                    "💡 Tip: Usa comillas para descripciones largas o multi-línea.",
+                    parse_mode=None
+                )
+                return
+
+            # 🛠️ Parseo inteligente: primer token = app_name, resto = descripción
+            # Usar split con maxsplit=1 para preservar el resto intacto
+            parts = content.split(maxsplit=1)
+            app_name = parts[0].strip()
+            spec_or_desc = parts[1].strip() if len(parts) > 1 else None
             
-            # Preparar entorno con PATH que incluya npm global
-            env = os.environ.copy()
-            npm_global_path = str(Path.home() / "AppData" / "Roaming" / "npm")
-            if npm_global_path not in env.get("PATH", ""):
-                env["PATH"] = npm_global_path + ";" + env.get("PATH", "")
+            # 🛠️ Limpiar comillas envolventes si las hay (preservando contenido interno)
+            if spec_or_desc:
+                # Remover comillas simples o dobles al inicio y final
+                if (spec_or_desc.startswith('"') and spec_or_desc.endswith('"')) or \
+                (spec_or_desc.startswith("'") and spec_or_desc.endswith("'")):
+                    spec_or_desc = spec_or_desc[1:-1]
             
-            # Comando ng new con ruta completa al ejecutable
-            cmd = [
-                ng_path,  # ← Usar ruta completa en lugar de solo "ng"
-                "new", app_name,
-                "--routing", "true",
-                "--style", "scss",
-                "--skip-git", "true",
-                "--minimal", "false"
-            ]
-            
-            # Ejecutar con subprocess.run (síncrono para evitar NotImplementedError)
-            process = subprocess.run(
-                cmd,
-                cwd=str(self.output_dir),
-                env=env,
-                input=b'Y\n',  # Responder 'Y' a prompts de ng new
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=300,  # 5 minutos timeout
-                shell=False   # ← Importante: False para seguridad
+            logger.info(f"📝 App: '{app_name}', Desc length: {len(spec_or_desc) if spec_or_desc else 0} chars")
+
+            # Validar nombre de app (solo alfanumérico, guiones, guiones bajos)
+            if not app_name or not all(c.isalnum() or c in '-_' for c in app_name):
+                await update.message.reply_text(
+                    "❌ Nombre de app inválido. Usa solo letras, números, guiones (-) o guiones bajos (_)", 
+                    parse_mode=None
+                )
+                return
+
+            # ✅ PRIMER MENSAJE: Confirmar inicio
+            await update.message.reply_text(
+                f"🚀 Iniciando creación de '{app_name}'...\n\n"
+                f"⏱️ Esto puede tardar varios minutos. Te iré informando del progreso.\n"
+                f"📁 Se creará en: {os.getenv('OUTPUT_DIRECTORY', '...')}/{app_name}",
+                parse_mode=None
             )
+            logger.info("✅ Mensaje de inicio enviado")
             
-            # Logging mejorado para debug
-            if process.returncode != 0:
-                stderr_text = process.stderr.decode('utf-8', errors='ignore')[:500]
-                stdout_text = process.stdout.decode('utf-8', errors='ignore')[:500]
-                logger.error(f"❌ ng new falló (code={process.returncode}):")
-                logger.error(f"   STDOUT: {stdout_text}")
-                logger.error(f"   STDERR: {stderr_text}")
-                return False
+            # Callback para reportar progreso a Telegram
+            async def report_progress(message: str):
+                try:
+                    await update.message.reply_text(f"🔧 {message}", parse_mode=None)
+                    await asyncio.sleep(0.5)
+                except Exception as e:
+                    logger.warning(f"⚠️ No se pudo reportar progreso: {e}")
             
-            self._log_progress(f"✅ Proyecto Angular creado en {app_path}")
-            return True
+            # Importar y configurar generador
+            from core.project_generator import ProjectGenerator
             
-        except subprocess.TimeoutExpired:
-            logger.error("⏰ Timeout en ng new (300s)")
-            return False
-        except FileNotFoundError as e:
-            logger.error(f"❌ Angular CLI no encontrado: {e}")
-            logger.error("💡 Verifica: ng version")
-            return False
+            output_dir = os.getenv("OUTPUT_DIRECTORY", "C:/Users/pedrodulce/develop/generated")
+            max_files = int(os.getenv("MAX_FILES_PER_PROJECT", "100"))
+            timeout = int(os.getenv("PROJECT_GENERATION_TIMEOUT", "1800"))
+            
+            logger.info(f"📁 Configuración: output_dir={output_dir}, max_files={max_files}, timeout={timeout}")
+            
+            generator = ProjectGenerator(output_dir, max_files, timeout)
+            generator.set_progress_callback(lambda msg: asyncio.create_task(report_progress(msg)))
+            
+            # Determinar si spec_or_desc es URL o descripción
+            api_spec = None
+            description = spec_or_desc
+            
+            if spec_or_desc and spec_or_desc.startswith(("http://", "https://")):
+                # Es una URL - intentar descargar la spec
+                try:
+                    import httpx
+                    logger.info(f"📥 Descargando API spec desde: {spec_or_desc[:50]}...")
+                    async with httpx.AsyncClient(timeout=30) as client:
+                        response = await client.get(spec_or_desc)
+                        response.raise_for_status()
+                        api_spec = response.text
+                        description = f"Aplicación basada en API: {spec_or_desc}"
+                        await report_progress(f"📥 Especificación API descargada")
+                except Exception as e:
+                    logger.warning(f"⚠️ No se pudo descargar la API spec: {e}")
+                    await report_progress(f"⚠️ No se pudo descargar la API spec: {e}")
+            
+            # Ejecutar generación
+            logger.info(f"🔧 Llamando a generator.create_angular_app('{app_name}', ...)")
+            result = await generator.create_angular_app(app_name, api_spec, description)
+            logger.info(f"🔧 Resultado: success={result['success']}, errors={result['errors']}")
+            
+            # Reportar resultado final
+            if result["success"]:
+                final_msg = (
+                    f"🎉 ¡Aplicación '{app_name}' creada exitosamente!\n\n"
+                    f"📁 Ubicación: {result['app_path']}\n"
+                    f"🌐 URL: http://localhost:{result['port']}\n\n"
+                    f"✅ La aplicación está corriendo. Ábrela en tu navegador.\n\n"
+                    f"💡 Comandos útiles:\n"
+                    f"• Para detener el servidor: Ctrl+C en la terminal donde corre ng serve\n"
+                    f"• Para rebuild: cd {result['app_path']} && ng build\n"
+                    f"• Para generar más componentes: ng generate component nombre"
+                )
+                await update.message.reply_text(final_msg, parse_mode=None)
+                logger.info("✅ Mensaje final de éxito enviado")
+            else:
+                errors = "\n".join(f"• {e}" for e in result["errors"])
+                await update.message.reply_text(
+                    f"❌ Error creando '{app_name}':\n\n{errors}\n\n"
+                    f"💡 Revisa los logs en la consola para más detalles.",
+                    parse_mode=None
+                )
+                logger.error(f"❌ Generación fallida: {errors}")
+                
+        except ImportError as e:
+            logger.error(f"❌ ImportError en cmd_create: {e}", exc_info=True)
+            try:
+                await update.message.reply_text(f"❌ Error de import: {e}", parse_mode=None)
+            except:
+                pass
         except Exception as e:
-            logger.error(f"❌ Error en _create_angular_project: {type(e).__name__}: {e}", exc_info=True)
-            return False
+            logger.error(f"❌ Excepción en cmd_create: {type(e).__name__}: {e}", exc_info=True)
+            try:
+                await update.message.reply_text(f"❌ Error: {type(e).__name__}: {e}", parse_mode=None)
+            except:
+                pass
 
     async def _generate_app_code(self, app_path: Path, api_spec: Optional[str],
                                   description: Optional[str]) -> bool:
