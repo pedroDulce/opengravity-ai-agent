@@ -1173,16 +1173,16 @@ FORMATO:
 # COMANDO: CREAR APLICACIÓN ANGULAR
 # ==============================
 
-
 async def cmd_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Comando /create [app_name] [descripción_o_api] - Crea app Angular autónomamente
+    Ahora soporta descripciones multi-línea y entre comillas correctamente.
     """
     # 🛠️ DEBUG: Logging inmediato
     logger.info(f"🔍 [DEBUG] cmd_create LLAMADO: {update.message.text if update.message else 'None'}")
     
-    if not update.message:
-        logger.error("❌ update.message es None")
+    if not update.message or not update.message.text:
+        logger.error("❌ update.message o message.text es None")
         return
 
     try:
@@ -1196,29 +1196,54 @@ async def cmd_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ No tienes permiso para crear proyectos", parse_mode=None)
             return
 
-        # Parsear argumentos
-        args = " ".join(context.args).strip()
-        logger.info(f"📋 Args recibidos: '{args}'")
+        # 🛠️ CORRECCIÓN CLAVE: Usar update.message.text en lugar de context.args
+        # para preservar comillas, saltos de línea y formato completo
+        full_text = update.message.text.strip()
         
-        if not args:
+        # Remover el comando /create (puede tener prefijo @botname)
+        if full_text.startswith("/create"):
+            content = full_text[7:].strip()  # Remover "/create"
+        elif "/create@" in full_text:
+            # Manejar /create@BotName
+            content = full_text.split("/create@", 1)[1]
+            content = content.split(" ", 1)[1] if " " in content else ""
+        else:
+            content = full_text
+        
+        logger.info(f"📋 Contenido después de remover /create: '{content[:200]}...'")
+        
+        if not content:
             await update.message.reply_text(
                 "💡 Uso: /create [nombre_app] [descripción_o_url_swagger]\n\n"
                 "Ejemplos:\n"
                 "• /create petstore-app 'Aplicación para Petstore API'\n"
-                "• /create my-app https://api.example.com/openapi.json",
+                "• /create my-app https://api.example.com/openapi.json\n\n"
+                "💡 Tip: Usa comillas para descripciones largas o multi-línea.",
                 parse_mode=None
             )
             return
 
-        # Separar nombre de app y descripción/API
-        parts = args.split(maxsplit=1)
-        app_name = parts[0]
-        spec_or_desc = parts[1] if len(parts) > 1 else None
-        logger.info(f"📝 App: '{app_name}', Spec/Desc: '{spec_or_desc[:50] if spec_or_desc else None}...'")
+        # 🛠️ Parseo inteligente: primer token = app_name, resto = descripción
+        # Usar split con maxsplit=1 para preservar el resto intacto
+        parts = content.split(maxsplit=1)
+        app_name = parts[0].strip()
+        spec_or_desc = parts[1].strip() if len(parts) > 1 else None
+        
+        # 🛠️ Limpiar comillas envolventes si las hay (preservando contenido interno)
+        if spec_or_desc:
+            # Remover comillas simples o dobles al inicio y final
+            if (spec_or_desc.startswith('"') and spec_or_desc.endswith('"')) or \
+               (spec_or_desc.startswith("'") and spec_or_desc.endswith("'")):
+                spec_or_desc = spec_or_desc[1:-1]
+        
+        logger.info(f"📝 App: '{app_name}', Desc length: {len(spec_or_desc) if spec_or_desc else 0} chars")
 
-        # Validar nombre
-        if not all(c.isalnum() or c in '-_' for c in app_name):
-            await update.message.reply_text("❌ Nombre de app inválido. Usa solo letras, números, guiones", parse_mode=None)
+        # Validar nombre de app (solo alfanumérico, guiones, guiones bajos)
+        if not app_name or not all(c.isalnum() or c in '-_' for c in app_name):
+            await update.message.reply_text(
+                "❌ Nombre de app inválido. Usa solo letras, números, guiones (-) o guiones bajos (_)", 
+                parse_mode=None
+            )
             return
 
         # ✅ PRIMER MENSAJE: Confirmar inicio
@@ -1237,7 +1262,14 @@ async def cmd_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await asyncio.sleep(0.5)
             except Exception as e:
                 logger.warning(f"⚠️ No se pudo reportar progreso: {e}")
-          
+        
+        # Importar y configurar generador
+        from core.project_generator import ProjectGenerator
+        
+        output_dir = os.getenv("OUTPUT_DIRECTORY", "C:/Users/pedrodulce/develop/generated")
+        max_files = int(os.getenv("MAX_FILES_PER_PROJECT", "100"))
+        timeout = int(os.getenv("PROJECT_GENERATION_TIMEOUT", "1800"))
+        
         logger.info(f"📁 Configuración: output_dir={output_dir}, max_files={max_files}, timeout={timeout}")
         
         generator = ProjectGenerator(output_dir, max_files, timeout)
@@ -1261,7 +1293,6 @@ async def cmd_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.warning(f"⚠️ No se pudo descargar la API spec: {e}")
                 await report_progress(f"⚠️ No se pudo descargar la API spec: {e}")
-                # Continuar solo con la descripción
         
         # Ejecutar generación
         logger.info(f"🔧 Llamando a generator.create_angular_app('{app_name}', ...)")
