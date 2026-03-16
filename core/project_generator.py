@@ -254,51 +254,54 @@ class ProjectGenerator:
             # Construir prompt para generar estructura de archivos
             prompt = f"""Eres un arquitecto Angular experto en la librería corporativa ATOM.
 
-        REGLAS OBLIGATORIAS - NO OMITIR:
+            REGLAS OBLIGATORIAS - NO OMITIR:
 
-        1. IMPORTS EN COMPONENTES STANDALONE (CRÍTICO):
-        - Incluye TODOS los módulos de Angular Material que uses en `imports: []`
-        - Ejemplo: imports: [CommonModule, ReactiveFormsModule, MatCardModule, MatFormFieldModule, MatInputModule]
-        - NO uses componentes de template sin importar su módulo primero
+            1. IMPORTS EN COMPONENTES STANDALONE (CRÍTICO):
+            - Si un componente usa OTRO componente en su template, DEBE importarlo en `imports: []`
+            - Ejemplo: Si app.component.ts tiene <lib-hello> en su template:
+                ```typescript
+                @Component({{
+                selector: 'app-root',
+                standalone: true,
+                imports: [CommonModule, MatCardModule, LibHelloComponent],  // ← IMPORTAR LibHelloComponent
+                template: `<lib-hello></lib-hello>`
+                }})
+                ```
+            - NO uses <lib-hello> sin importar LibHelloComponent primero
 
-        2. TIPOS E INTERFACES:
-        - Define TODAS las interfaces/types que uses, o usa tipos inline
-        - NO references tipos como 'AutocompleteEstructura' sin definirlos primero
-        - Prefiere: interface Ciudad {{ id: number; nombre: string; }}
+            2. app.config.ts (OPCIONAL):
+            - Si no usas ApplicationConfig, OMITE app.config.ts o déjalo con:
+                ```typescript
+                // No se requiere configuración adicional para esta app
+                export {{}};
+                ```
+            - NO dejes un archivo vacío sin export
 
-        3. CONSISTENCIA CLASE/TEMPLATE:
-        - Toda propiedad usada en el template DEBE existir como propiedad pública en la clase
-        - Toda función llamada en (click) DEBE estar implementada en la clase
-        - Ejemplo: si el template tiene (click)="onSave()", la clase debe tener onSave(): void {{ ... }}
+            3. FORMATO DE ARCHIVOS (ESTRICTO):
+            Para CADA archivo, usa EXACTAMENTE:
+            
+            === FILE: src/app/app.component.ts ===
+            ```typescript
+            import {{ Component }} from '@angular/core';
+            import {{ CommonModule }} from '@angular/common';
+            import {{ MatCardModule }} from '@angular/material/card';
+            import {{ LibHelloComponent }} from './lib-hello/lib-hello.component';  // ← IMPORTAR
 
-        4. SIGNALS Y ESTADO:
-        - Los signals accesados desde el template deben ser públicos o usar .asObservable()
-        - Ejemplo: readonly ciudades$ = this._ciudades.asObservable();
+            @Component({{
+                selector: 'app-root',
+                standalone: true,
+                imports: [CommonModule, MatCardModule, LibHelloComponent],  // ← LISTAR AQUÍ
+                template: `<lib-hello></lib-hello>`
+            }})
+            export class AppComponent {{}}
+                PATRÓN ATOM:
+                    Selector: 'lib-', Clase: 'LibComponent', standalone: true, OnPush, inject(), signal()
 
-        5. PATRÓN ATOM:
-        - Selector: 'lib-*', Clase: 'Lib*Component<T> extends LibBaseComponent<T>'
-        - standalone: true, changeDetection: ChangeDetectionStrategy.OnPush
-        - inject() para DI, signal()/computed() para estado
-        - Lifecycle: ngOnInit, ngAfterViewInit, ngOnDestroy
-
-        {'ESPECIFICACIÓN API:' if api_spec else 'DESCRIPCIÓN DE LA APP:'}
-        {api_spec[:4000] if api_spec else description}
-
-        {angular_context if angular_context else ''}
-
-        TU TAREA: Generar código Angular COMPILABLE para: aplicación de gestión
-
-FORMATO ESTRICTO:
-=== FILE: src/app/path/to/file.ts ===
-```typescript
-Genera como mínimo:
-
-    app.config.ts o app.module.ts con imports de Angular Material
-    Un componente principal
-    Un servicio para consumir la API
-    Interfaces TypeScript para los modelos
-
-    NO incluyas explicaciones, solo los archivos en el formato especificado."""
+            DESCRIPCIÓN DE LA APP:
+            {description}
+            {angular_context if angular_context else ''}
+            TU TAREA: Generar código Angular COMPILABLE para aplicación minimalista con LibHelloComponent.
+            RESPONDE SOLO CON ARCHIVOS EN FORMATO === FILE: ... ===, SIN EXPLICACIONES."""
             # ✅ CORRECTO: Usar asyncio.wait_for para manejar el timeout
             response = await asyncio.wait_for(
                 asyncio.to_thread(client.generate, prompt),
