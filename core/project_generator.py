@@ -291,7 +291,11 @@ class ProjectGenerator:
     Interfaces TypeScript para los modelos
 
     NO incluyas explicaciones, solo los archivos en el formato especificado."""
-            response = await asyncio.to_thread(client.generate, prompt, timeout=180)
+            # ✅ CORRECTO: Usar asyncio.wait_for para manejar el timeout
+            response = await asyncio.wait_for(
+                asyncio.to_thread(client.generate, prompt),
+                timeout=180  # 3 minutos para generación de código
+            )
     
             # Parsear respuesta y escribir archivos
             files_written = await self._parse_and_write_files(app_path, response)
