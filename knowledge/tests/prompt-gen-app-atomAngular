@@ -69,3 +69,28 @@ GENERAR:
 • Usuario model interface desde Swagger
 • Routing con lazy loading
 • Estilos con variables de tema M3"
+
+
+
+****
+
+async def create_angular_app(self, app_name: str, api_spec: Optional[str] = None,
+                              description: Optional[str] = None) -> Dict:
+    # ... código existente ...
+    
+    # Paso 2: Generar código desde API spec o descripción
+    if api_spec or description:
+        if not await self._generate_app_code(app_path, api_spec, description):
+            result["errors"].append("Error generando código de la app")
+            return result
+        
+        # 🛠️ NUEVO: Validar código generado contra reglas ATOM
+        validation_errors = self._validate_generated_code(app_path)
+        if validation_errors:
+            logger.warning(f"⚠️ {len(validation_errors)} advertencias de validación ATOM")
+            for error in validation_errors[:5]:
+                logger.warning(f"   - {error}")
+            # No fallar por warnings, solo loguear
+            # Si son errores críticos, podrías añadirlos a result["errors"]
+    
+    # ... resto del código ...

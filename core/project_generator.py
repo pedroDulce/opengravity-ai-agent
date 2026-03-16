@@ -101,9 +101,15 @@ class ProjectGenerator:
             # Paso 2: Generar código desde API spec o descripción
             if api_spec or description:
                 if not await self._generate_app_code(app_path, api_spec, description):
-                    # ✅ CORRECTO:
                     result["errors"].append("Error generando código de la app")
                     return result
+                
+                # 🛠️ Validar código generado contra reglas ATOM
+                validation_errors = self._validate_generated_code(app_path)
+                if validation_errors:
+                    logger.warning(f"⚠️ {len(validation_errors)} advertencias de validación ATOM")
+                    for error in validation_errors[:5]:
+                        logger.warning(f"   - {error}")
 
             # ✅ CORRECTO (sin await, es método síncrono):
             if not self._install_dependencies(app_path):            
@@ -661,28 +667,164 @@ class ProjectGenerator:
 
 
     def _validate_generated_code(self, app_path: Path) -> List[str]:
-        """Valida que el código generado tiene imports consistentes"""
+        """
+        Valida que el código generado cumple con las reglas ATOM para CUALQUIER componente.
+        
+        Reglas validadas:
+        • Selector comienza con 'lib-'
+        • Nombre de clase comienza con 'Lib'
+        • standalone: true
+        • changeDetection: ChangeDetectionStrategy.OnPush
+        • Inyección vía inject() (no constructor)
+        • Usa signal()/computed() para estado
+        • Implementa lifecycle hooks (OnInit, AfterViewInit, OnDestroy)
+        • Imports consistentes en componentes standalone
+        • Estilos en archivo .scss separado (no CSS inline)
+        """
         errors = []
+        warnings = []
+        app_src = app_path / "src" / "app"
         
-        # Leer app.component.ts si existe
-        app_component = app_path / "src" / "app" / "app.component.ts"
-        if app_component.exists():
-            content = app_component.read_text(encoding='utf-8')
-            
-            # Si usa <lib-hello> pero no importa LibHelloComponent
-            if '<lib-hello>' in content and 'LibHelloComponent' not in content:
-                errors.append("app.component.ts usa <lib-hello> pero no importa LibHelloComponent")
-            
-            # Si es standalone pero imports está vacío o no lista dependencias usadas
-            if 'standalone: true' in content and 'imports: []' in content:
-                errors.append("Componente standalone con imports: [] vacío puede causar errores")
+        # 🛠️ Buscar todos los archivos .ts en src/app
+        ts_files = list(app_src.rglob("*.ts"))
         
-        # Verificar app.config.ts
+        # 🛠️ Patrones regex para validación ATOM
+        patterns = {
+            'selector_lib': re.compile(r"selector:\s*['\"](lib-[^\'\"]+)['\"]"),
+            'class_lib': re.compile(r"export\s+class\s+(Lib\w+)"),
+            'standalone': re.compile(r"standalone:\s*true"),
+            'onpush': re.compile(r"changeDetection:\s*ChangeDetectionStrategy\.OnPush"),
+            'inject': re.compile(r"inject\(\w+\)"),
+            'signal': re.compile(r"signal\(|computed\(|\.set\(|\.update\("),
+            'oninit': re.compile(r"ngOnInit\s*\("),
+            'afterviewinit': re.compile(r"ngAfterViewInit\s*\("),
+            'ondestroy': re.compile(r"ngOnDestroy\s*\("),
+            'constructor_di': re.compile(r"constructor\s*\([^)]*\([^)]*\)\s*:"),  # Constructor con DI
+            'css_inline': re.compile(r"style:\s*['\"]|<[^>]+style=['\"]"),  # CSS inline
+        }
+        
+        for ts_file in ts_files:
+            try:
+                content = ts_file.read_text(encoding='utf-8')
+                rel_path = ts_file.relative_to(app_path)
+                filename = ts_file.name
+                
+                # 🛠️ Solo validar componentes (archivos con @Component)
+                if '@Component' not in content:
+                    continue
+                
+                # ✅ 1. Validar selector con prefijo 'lib-'
+                selector_match = patterns['selector_lib'].search(content)
+                if not selector_match:
+                    # Si es un componente pero no tiene selector lib-, es warning (puede ser app.component)
+                    if 'app.component' not in filename.lower():
+                        warnings.append(f"{rel_path}: Selector no sigue convención 'lib-*'")
+                
+                # ✅ 2. Validar nombre de clase con prefijo 'Lib'
+                class_match = patterns['class_lib'].search(content)
+                if not class_match and 'app.component' not in filename.lower():
+                    warnings.append(f"{rel_path}: Nombre de clase no sigue convención 'Lib*'")
+                
+                # ✅ 3. Validar standalone: true (OBLIGATORIO para componentes ATOM)
+                if not patterns['standalone'].search(content):
+                    if 'app.component' not in filename.lower():
+                        errors.append(f"{rel_path}: Componente debe ser standalone: true (regla ATOM)")
+                
+                # ✅ 4. Validar changeDetection: OnPush (OBLIGATORIO)
+                if not patterns['onpush'].search(content):
+                    if 'app.component' not in filename.lower():
+                        errors.append(f"{rel_path}: Debe usar ChangeDetectionStrategy.OnPush (regla ATOM)")
+                
+                # ✅ 5. Validar inyección vía inject() (NO constructor con DI)
+                has_inject = patterns['inject'].search(content)
+                has_constructor_di = patterns['constructor_di'].search(content)
+                
+                if has_constructor_di and not has_inject:
+                    errors.append(f"{rel_path}: Usar inject() para inyección de dependencias (NO constructor)")
+                
+                # ✅ 6. Validar uso de signals para estado (RECOMENDADO)
+                if not patterns['signal'].search(content):
+                    # Solo warning, no todos los componentes necesitan estado reactivo
+                    warnings.append(f"{rel_path}: Considerar usar signal()/computed() para estado reactivo")
+                
+                # ✅ 7. Validar lifecycle hooks (RECOMENDADO)
+                has_oninit = patterns['oninit'].search(content)
+                has_afterviewinit = patterns['afterviewinit'].search(content)
+                has_ondestroy = patterns['ondestroy'].search(content)
+                
+                # Si tiene OnInit, debería tener OnDestroy para cleanup
+                if has_oninit and not has_ondestroy:
+                    warnings.append(f"{rel_path}: Si implementa ngOnInit, considerar ngOnDestroy para cleanup")
+                
+                # ✅ 8. Validar imports consistentes en componentes standalone
+                if patterns['standalone'].search(content):
+                    # Si usa componentes de template, debe importar sus módulos/clases
+                    template_matches = re.findall(r'<(lib-\w+)', content)
+                    for component_tag in template_matches:
+                        component_class = component_tag.replace('lib-', 'Lib').replace('-', '').title() + 'Component'
+                        # Verificar si el componente está importado
+                        if component_class not in content and 'imports:' not in content:
+                            warnings.append(f"{rel_path}: Usa <{component_tag}> pero puede faltar import en imports: []")
+                    
+                    # Validar que imports: [] no esté vacío si usa componentes externos
+                    imports_empty = re.search(r'imports:\s*\[\s*\]', content)
+                    if imports_empty and template_matches:
+                        errors.append(f"{rel_path}: imports: [] vacío pero usa componentes externos en template")
+                
+                # ✅ 9. Validar NO CSS inline
+                if patterns['css_inline'].search(content):
+                    errors.append(f"{rel_path}: No usar CSS inline, usar archivo .scss separado")
+                
+                # ✅ 10. Validar que existe archivo .scss para el componente (si es componente lib-)
+                if selector_match and 'app.component' not in filename.lower():
+                    scss_file = ts_file.with_suffix('.scss')
+                    if not scss_file.exists():
+                        # Intentar buscar en la misma carpeta
+                        component_name = ts_file.stem
+                        scss_alternatives = list(ts_file.parent.glob(f"{component_name}.scss"))
+                        if not scss_alternatives:
+                            warnings.append(f"{rel_path}: Componente sin archivo .scss asociado")
+            
+            except Exception as e:
+                logger.warning(f"⚠️ No se pudo validar {ts_file}: {e}")
+                continue
+        
+        # 🛠️ Validación adicional: app.config.ts
         app_config = app_path / "src" / "app" / "app.config.ts"
         if app_config.exists():
             content = app_config.read_text(encoding='utf-8').strip()
-            if not content or content == '// No es necesario para este ejemplo':
-                # Si está vacío, mejor eliminarlo o añadir export
+            if not content or content.startswith('//') and 'export' not in content:
+                # Si está vacío o solo comentarios, añadir export mínimo
                 app_config.write_text("export {};\n// Configuración mínima para Angular", encoding='utf-8')
+                logger.info(f"✅ app.config.ts corregido con export mínimo")
         
-        return errors
+        # 🛠️ Validación: consistency entre componentes y imports
+        # Buscar todos los selectores usados en templates
+        all_selectors = []
+        all_component_classes = []
+        
+        for ts_file in ts_files:
+            try:
+                content = ts_file.read_text(encoding='utf-8')
+                
+                # Extraer selectores definidos
+                selectors = re.findall(r"selector:\s*['\"]([^'\"]+)['\"]", content)
+                all_selectors.extend(selectors)
+                
+                # Extraer clases de componentes exportadas
+                classes = re.findall(r"export\s+class\s+(\w+Component)", content)
+                all_component_classes.extend(classes)
+                
+            except:
+                continue
+        
+        # Log resumen
+        if errors:
+            logger.warning(f"⚠️ {len(errors)} errores de validación ATOM detectados")
+            for error in errors[:5]:  # Mostrar primeros 5
+                logger.warning(f"   - {error}")
+        
+        if warnings:
+            logger.info(f"ℹ️ {len(warnings)} advertencias de validación ATOM")
+        
+        return errors + warnings  # Devolver ambos para que el caller decida
