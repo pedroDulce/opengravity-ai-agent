@@ -1,17 +1,4 @@
-# ❌ INCORRECTO:
-port = await self._start_dev_server(app_path)
-
-# ✅ CORRECTO (sin await, es método síncrono):
-port = self._start_dev_server(app_path)
-
-
-/create atom-petstore "Aplicación Angular ATOM para Petstore API:
-- Componentes standalone con prefijo lib-
-- Inyección vía inject(), estado con signal()/computed()
-- ChangeDetectionStrategy.OnPush
-- Estilos con tema M3: @use '@muface-lib/muface-lib/estilos/m3-theme'"
-
-
+Usos del agente:
 /ai ¿Qué es un DTO en Angular?
 /dev crear servicio HTTP tipado para pets
 /explain [pega código]
@@ -23,6 +10,20 @@ port = self._start_dev_server(app_path)
 /tests C:/backend/src/tests
 /context search componente standalone
 /create mi-app "Descripción de la app"
+
+
+/create atom-petstore "Aplicación Angular ATOM para Petstore API:
+- Componentes standalone con prefijo lib-
+- Inyección vía inject(), estado con signal()/computed()
+- ChangeDetectionStrategy.OnPush
+- Estilos con tema M3: @use '@muface-lib/muface-lib/estilos/m3-theme'"
+
+/create test-demo "App Angular ATOM minimalista con:
+
+    - Un componente LibHelloComponent standalone
+    - Muestra 'Hola ATOM' en un mat-card
+    - Sin servicios, sin APIs, sin formularios
+    - Solo valida que compila y corre en localhost:4200"
 
 /create test-demo "App Angular demo"
 

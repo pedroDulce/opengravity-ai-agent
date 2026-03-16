@@ -319,61 +319,142 @@ Genera como mínimo:
             logger.error(f"❌ Error en _generate_app_code: {e}", exc_info=True)
             return False
 
+
     async def _parse_and_write_files(self, app_path: Path, response: str) -> int:
         """Parsea la respuesta de la IA y escribe los archivos en disco"""
         import re
-
+        
         files_written = 0
         app_src = app_path / "src" / "app"
-
-        # Patrón para extraer archivos: === FILE: ruta === ```lenguaje contenido ```
-        file_pattern = r'=== FILE: (src/app/[^\s]+) ===\s*```(?:\w+)?\s*(.*?)```'
-
-        matches = re.findall(file_pattern, response, re.DOTALL)
-
-        for file_path, content in matches:
-            try:
-                # Validar que no excedemos límite de archivos
-                if files_written >= self.max_files:
-                    logger.warning(f"⚠️ Límite de archivos alcanzado ({self.max_files})")
-                    break
-
-                # Construir ruta completa
-                full_path = app_src.parent.parent / file_path  # Desde src/
-
-                # Crear directorios padre si no existen
-                full_path.parent.mkdir(parents=True, exist_ok=True)
-
-                # Escribir archivo
-                full_path.write_text(content.strip(), encoding='utf-8')
-                files_written += 1
-
-                logger.debug(f"📝 Escrito: {file_path}")
-
-            except Exception as e:
-                logger.warning(f"⚠️ No se pudo escribir {file_path}: {e}")
-                continue
-
+        
+        # 🛠️ LOGGING: Ver qué respondió la IA
+        logger.info(f"🔍 Respuesta de IA recibida ({len(response)} chars)")
+        
+        # 🛠️ PATRÓN PRINCIPAL: Extrae ruta Y contenido del formato ### FILE: ruta ===
+        # Soporta: ### FILE: src/app/x.ts ===, === FILE: src/app/x.ts ===, // FILE: src/app/x.ts
+        file_pattern = r'(?:###|===|//)\s*FILE:\s*(src/app/[^\s\n]+?)\s*(?:===)?\s*\n\s*```(?:\w+)?\s*\n(.*?)```'
+        
+        matches = re.findall(file_pattern, response, re.DOTALL | re.IGNORECASE)
+        
+        if matches:
+            logger.info(f"✅ Patrón principal encontró {len(matches)} archivos con ruta explícita")
+            
+            for file_path, content in matches:
+                try:
+                    if files_written >= self.max_files:
+                        logger.warning(f"⚠️ Límite de archivos alcanzado ({self.max_files})")
+                        break
+                    
+                    # Limpiar contenido: remover marcas de código si quedaron
+                    content = re.sub(r'^```(?:\w+)?\s*', '', content.strip())
+                    content = re.sub(r'```$', '', content.strip())
+                    
+                    # Construir ruta completa
+                    full_path = app_src.parent.parent / file_path.strip()
+                    
+                    # Crear directorios padre si no existen
+                    full_path.parent.mkdir(parents=True, exist_ok=True)
+                    
+                    # Escribir archivo
+                    full_path.write_text(content, encoding='utf-8')
+                    files_written += 1
+                    
+                    logger.info(f"📝 Escrito: {file_path.strip()} ({len(content)} chars)")
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️ No se pudo escribir {file_path}: {e}")
+                    continue
+        
+        # 🛠️ FALLBACK: Si no encontró con patrón principal, intentar extraer bloques de código con inferencia de nombre
+        if files_written == 0:
+            logger.warning("⚠️ Patrón principal no encontró archivos. Intentando fallback...")
+            
+            # Extraer bloques de código y comentarios que puedan contener rutas
+            code_blocks = re.findall(
+                r'(?:###|===|//)\s*FILE:\s*([^\s\n]+)\s*(?:===)?\s*\n\s*```(?:\w+)?\s*\n(.*?)```',
+                response, re.DOTALL | re.IGNORECASE
+            )
+            
+            for file_path, content in code_blocks:
+                try:
+                    if files_written >= self.max_files:
+                        break
+                    
+                    content = re.sub(r'^```(?:\w+)?\s*', '', content.strip())
+                    content = re.sub(r'```$', '', content.strip())
+                    
+                    # Si la ruta no empieza con src/app, asumirla relativa a app/
+                    if not file_path.strip().startswith('src/'):
+                        file_path = f"src/app/{file_path.strip()}"
+                    
+                    full_path = app_src.parent.parent / file_path.strip()
+                    full_path.parent.mkdir(parents=True, exist_ok=True)
+                    full_path.write_text(content, encoding='utf-8')
+                    files_written += 1
+                    
+                    logger.info(f"📝 Fallback escrito: {file_path.strip()}")
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️ Fallback falló: {e}")
+        
+        # 🛠️ ÚLTIMO RECURSO: Extraer cualquier bloque de código y nombrarlo genéricamente
+        if files_written == 0:
+            logger.warning("⚠️ No se encontraron archivos con rutas. Extrayendo bloques de código genéricos...")
+            
+            code_blocks = re.findall(r'```(?:typescript|ts|html|scss)?\s*\n(.*?)```', response, re.DOTALL)
+            
+            for i, content in enumerate(code_blocks[:10]):  # Máximo 10 bloques
+                try:
+                    content = content.strip()
+                    
+                    # Inferir extensión y nombre por contenido
+                    if '<template>' in content or '@Component' in content:
+                        ext = 'ts'
+                        filename = f'component-{i}.component.ts'
+                    elif '@Injectable' in content:
+                        ext = 'ts'
+                        filename = f'service-{i}.service.ts'
+                    elif '<div' in content or '<mat-' in content:
+                        ext = 'html'
+                        filename = f'template-{i}.component.html'
+                    elif '{' in content and ('.scss' in content.lower() or 'style' in content.lower()):
+                        ext = 'scss'
+                        filename = f'styles-{i}.scss'
+                    else:
+                        ext = 'ts'
+                        filename = f'generated-{i}.ts'
+                    
+                    full_path = app_src / filename
+                    full_path.parent.mkdir(parents=True, exist_ok=True)
+                    full_path.write_text(content, encoding='utf-8')
+                    files_written += 1
+                    
+                    logger.info(f"📝 Genérico escrito: {filename}")
+                    
+                except Exception as e:
+                    logger.warning(f"⚠️ Genérico falló: {e}")
+        
+        if files_written == 0:
+            logger.error(f"❌ No se pudo extraer ningún archivo. Respuesta:\n{response[:2000]}")
+        
         return files_written
 
     def _install_dependencies(self, app_path: Path) -> bool:
-        """Instala dependencias con npm install (síncrono)"""
-        self._log_progress("📦 Instalando dependencias (puede tardar 15-20 min)...")
+        """Instala dependencias con npm install (síncrono) para entorno ATOM/Nexus"""
+        self._log_progress("📦 Instalando dependencias ATOM (puede tardar 15-20 min)...")
         
         try:
             import subprocess
             import shutil
             
-            # 🛠️ CRÍTICO: Encontrar la ruta completa de 'npm' en Windows
+            # 🛠️ Encontrar la ruta completa de 'npm' en Windows
             npm_path = shutil.which("npm")
             
             if not npm_path:
-                # Intentar ruta típica de npm global en Windows
                 npm_cmd_path = Path.home() / "AppData" / "Roaming" / "npm" / "npm.cmd"
                 if npm_cmd_path.exists():
                     npm_path = str(npm_cmd_path)
                 else:
-                    # Último intento: buscar en PATH manualmente
                     env_path = os.environ.get("PATH", "")
                     for path_dir in env_path.split(";"):
                         candidate = Path(path_dir) / "npm.cmd"
@@ -383,7 +464,6 @@ Genera como mínimo:
             
             if not npm_path:
                 logger.error("❌ No se encontró 'npm' en PATH ni en rutas típicas")
-                logger.error(f"💡 PATH actual: {os.environ.get('PATH', '')[:300]}...")
                 return False
             
             logger.info(f"✅ Usando npm en: {npm_path}")
@@ -394,25 +474,54 @@ Genera como mínimo:
             if npm_global_path not in env.get("PATH", ""):
                 env["PATH"] = npm_global_path + ";" + env.get("PATH", "")
             
-            # Crear .npmrc temporal para usar registry público (evita error 504 de Nexus)
+            # 🛠️ CRÍTICO: Crear .npmrc con configuración ATOM/Nexus completa
+            # (esto reemplaza los argumentos --//...:_auth= que no funcionan en CLI)
             npmrc_path = app_path / ".npmrc"
             original_npmrc = None
             
             if npmrc_path.exists():
                 original_npmrc = npmrc_path.read_text(encoding='utf-8')
             
-            npmrc_content = """registry=https://registry.npmjs.org/
+            # Configuración completa para Nexus + ATOM (igual que tu Dockerfile)
+            npmrc_content = """# Registry principal (proxy de npmjs.org)
+    registry=https://artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/
+
+    # Autenticación para registry principal
+    //artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/:_auth=bXVmYWNlOmF0b20yMDI0
+
+    # Registry específico para @muface-lib (librería ATOM)
+    @muface-lib:registry=https://artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/
+
+    # Autenticación para registry ATOM
+    //artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/:_auth=bXVmYWNlOmF0b20yMDI0
+
+    # Configuración de conexión
     strict-ssl=false
     fetch-retries=10
     fetch-retry-mintimeout=20000
     fetch-retry-maxtimeout=600000
+    fetch-timeout=300000
+
+    # legacy-peer-deps para compatibilidad con Angular Material + ATOM
+    legacy-peer-deps=true
     """
             npmrc_path.write_text(npmrc_content, encoding='utf-8')
+            logger.info(f"✅ .npmrc configurado para Nexus/ATOM en {npmrc_path}")
             
-            # Ejecutar npm install con ruta completa al ejecutable
+            # 🛠️ CORRECTO: Cada argumento como elemento separado de la lista
+            cmd = [
+                npm_path,
+                "install",
+                "--legacy-peer-deps",  # Para compatibilidad con dependencias de ATOM
+                "--verbose",            # Logging detallado
+                "--no-progress"         # Evita problemas de render en subprocess
+            ]
+            
+            logger.info(f"🔧 Ejecutando: {' '.join(cmd)}")
+            
+            # Ejecutar npm install
             process = subprocess.run(
-                # [npm_path, "install"],  # Usamos ruta completa, no solo "npm"
-                [npm_path, "install --legacy-peer-deps --verbose --strict-ssl=false --registry=https://artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/ --//artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/:_auth=bXVmYWNlOmF0b20yMDI0 --@muface-lib:registry=https://artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/ --//artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/:_auth=bXVmYWNlOmF0b20yMDI0"],
+                cmd,  # ← Lista de argumentos separados, NO una cadena
                 cwd=str(app_path),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -428,10 +537,13 @@ Genera como mínimo:
             
             if process.returncode != 0:
                 stderr_text = process.stderr.decode('utf-8', errors='ignore')[:500]
-                logger.error(f"❌ npm install falló: {stderr_text}")
+                stdout_text = process.stdout.decode('utf-8', errors='ignore')[:200]
+                logger.error(f"❌ npm install falló (code={process.returncode}):")
+                logger.error(f"   STDOUT: {stdout_text}")
+                logger.error(f"   STDERR: {stderr_text}")
                 return False
             
-            self._log_progress("✅ Dependencias instaladas")
+            self._log_progress("✅ Dependencias ATOM instaladas")
             return True
             
         except subprocess.TimeoutExpired:
@@ -443,7 +555,6 @@ Genera como mínimo:
         except Exception as e:
             logger.error(f"❌ Error en _install_dependencies: {e}", exc_info=True)
             return False
-
     
     def _start_dev_server(self, app_path: Path) -> Optional[int]:
         """Inicia ng serve en background (síncrono con Popen)"""
