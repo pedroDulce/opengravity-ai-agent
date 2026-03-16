@@ -1178,13 +1178,21 @@ async def cmd_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Comando /create [app_name] [descripción_o_api] - Crea app Angular autónomamente
     Ahora soporta descripciones multi-línea y entre comillas correctamente.
     """
-    # 🛠️ DEBUG: Logging inmediato
-    logger.info(f"🔍 [DEBUG] cmd_create LLAMADO: {update.message.text if update.message else 'None'}")
+    
+    # 🛠️ LOGGING DE DIAGNÓSTICO para multi-línea
+    logger.info(f"🔍 cmd_create llamado")
+    logger.info(f"   update.message: {update.message}")
+    if update.message and update.message.text:
+        logger.info(f"   Texto completo recibido ({len(update.message.text)} chars):")
+        logger.info(f"   '''{update.message.text}'''")
+        # Log cada línea por separado para ver saltos de línea
+        for i, line in enumerate(update.message.text.split('\n')):
+            logger.info(f"   Línea {i}: '{line}'")
     
     if not update.message or not update.message.text:
         logger.error("❌ update.message o message.text es None")
         return
-
+    
     try:
         # 🔐 Seguridad: solo el dueño del chat
         user_chat_id = update.effective_user.id
@@ -1262,16 +1270,7 @@ async def cmd_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await asyncio.sleep(0.5)
             except Exception as e:
                 logger.warning(f"⚠️ No se pudo reportar progreso: {e}")
-        
-        # Importar y configurar generador
-        from core.project_generator import ProjectGenerator
-        
-        output_dir = os.getenv("OUTPUT_DIRECTORY", "C:/Users/pedrodulce/develop/generated")
-        max_files = int(os.getenv("MAX_FILES_PER_PROJECT", "100"))
-        timeout = int(os.getenv("PROJECT_GENERATION_TIMEOUT", "1800"))
-        
-        logger.info(f"📁 Configuración: output_dir={output_dir}, max_files={max_files}, timeout={timeout}")
-        
+                
         generator = ProjectGenerator(output_dir, max_files, timeout)
         generator.set_progress_callback(lambda msg: asyncio.create_task(report_progress(msg)))
         
