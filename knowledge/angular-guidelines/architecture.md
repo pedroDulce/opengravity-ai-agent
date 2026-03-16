@@ -1,8 +1,10 @@
+
 ## 2️⃣ `knowledge/angular-guidelines/architecture.md`
 
-```markdown
+<!-- KEYWORDS: atom, lib-, standalone, OnPush, inject, signal, computed, m3-theme, muface-lib, angular-material, corporate, component, service, interceptor -->
 # 🏗️ Arquitectura Angular Corporativa
 
+markdown
 ## Patrones Aprobados
 
 ### 1. Module per Feature (Recomendado)

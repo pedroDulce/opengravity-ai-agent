@@ -1,6 +1,8 @@
 ## 3️⃣ `knowledge/angular-guidelines/styling-guide.md`
 
 ```markdown
+<!-- KEYWORDS: atom, lib-, standalone, OnPush, inject, signal, computed, m3-theme, muface-lib, angular-material, corporate, component, service, interceptor -->
+
 # 🎨 Guía de Estilos Corporativa
 
 ## Variables SCSS Globales

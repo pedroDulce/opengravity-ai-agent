@@ -30,12 +30,12 @@ class ContextManager:
         self._cache: Dict[str, str] = {}
         self._index: Dict[str, List[Path]] = {
             "angular-guidelines": [],
+            "atom-guidelines": [],  # ← Para tus archivos ATOM
             "api-contracts": [],
-            "atom-guidelines": [],
             "examples": [],
             "general": []
         }
-        
+                
         if self.knowledge_path.exists():
             self._build_index()
             logger.info(f"✅ ContextManager inicializado: {len(self._cache)} documentos cargados")
@@ -83,7 +83,7 @@ class ContextManager:
         query_lower = query.lower()
         query_words = set(query_lower.split())
         
-        # 🔍 Detectar si la query menciona conceptos ATOM
+        # Detectar si es query ATOM
         is_atom_query = any(kw in query_lower for kw in [
             "component", "lib-", "atom", "material", "standalone", 
             "onpush", "inject", "signal", "computed", "m3-theme", "muface"

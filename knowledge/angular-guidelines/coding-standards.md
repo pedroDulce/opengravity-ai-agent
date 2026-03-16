@@ -1,6 +1,7 @@
 ## 1️⃣ `knowledge/angular-guidelines/coding-standards.md`
 
 ```markdown
+<!-- KEYWORDS: atom, lib-, standalone, OnPush, inject, signal, computed, m3-theme, muface-lib, angular-material, corporate, component, service, interceptor -->
 # 🅰️ Estándares de Código Angular - Corporativo
 
 ## ✅ Convenciones Obligatorias

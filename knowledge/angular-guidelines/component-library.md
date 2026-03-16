@@ -1,8 +1,9 @@
 # 📄 Contenido para `knowledge/angular-guidelines/component-library.md`
 
+```markdown
+<!-- KEYWORDS: atom, lib-, standalone, OnPush, inject, signal, computed, m3-theme, muface-lib, angular-material, corporate, component, service, interceptor -->
 # 🧩 Librería de Componentes Corporativos Angular
 
-```markdown
 ## Componentes UI Base Disponibles
 
 Todos los componentes están en el paquete `@corp/ui-components` y deben usarse en lugar de elementos HTML nativos.

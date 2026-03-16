@@ -1,4 +1,5 @@
 markdown
+<!-- KEYWORDS: atom, lib-, standalone, OnPush, inject, signal, computed, m3-theme, muface-lib, angular-material, corporate, component, service, interceptor -->
 # 🧩 Guía de Desarrollo de Componentes ATOM - Corporativo
 
 ## 📦 Versiones Requeridas
