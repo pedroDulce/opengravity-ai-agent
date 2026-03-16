@@ -1,0 +1,61 @@
+/create atom-petstore "Aplicación Angular ATOM para Petstore API:
+- Componentes standalone con prefijo lib-
+- Inyección vía inject(), estado con signal()/computed()
+- ChangeDetectionStrategy.OnPush
+- Estilos con tema M3: @use '@muface-lib/muface-lib/estilos/m3-theme'"
+
+
+/ai ¿Qué es un DTO en Angular?
+/dev crear servicio HTTP tipado para pets
+/explain [pega código]
+/debug KeyError: 'user_id'
+/review C:/ruta/a/archivo.ts
+/analyze C:/ruta/a/carpeta
+/angular C:/ruta/a/proyecto-angular
+/swagger https://petstore.swagger.io/v2/swagger.json
+/tests C:/backend/src/tests
+/context search componente standalone
+/create mi-app "Descripción de la app"
+
+
+Ejemplo de mensaje en Telegram para crear una app Angular con web atom componentes:
+
+/create atom-demo Aplicación Angular corporativa ATOM para la API basada en C:/Users/pedrodulce/develop/generated/swagger-sample-app-demo.json
+
+REGLAS OBLIGATORIAS ATOM:
+• Componentes standalone con selector 'lib-' y clase 'Lib*'
+• changeDetection: ChangeDetectionStrategy.OnPush
+• Inyección de servicios vía inject(), no constructor
+• Estado reactivo con signal()/computed()
+• Lifecycle hooks: OnInit, AfterViewInit, OnDestroy
+• Estilos en .scss separado, NO CSS inline
+• Tema M3 global: @use '@angular/material' as mat; @use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme;
+
+FUNCIONALIDADES REQUERIDAS:
+• Listado de ciudades, organismos, expedientes, usuarios con búsqueda y filtrado
+• Detalle de cada uno de esos elementos antes citados con edición
+• Formulario reactivo con validación ATOM
+• Servicio HTTP tipado con interceptors corporativoss
+• Interfaces TypeScript para modelos de la API
+
+GENERAR:
+• LibCiudadesListComponent (standalone, OnPush, inject())
+• LibCiudadService con HttpClient tipado
+• Ciudad model interface desde Swagger
+• Routing con lazy loading
+• Estilos con variables de tema M3
+• LibOrganismosListComponent (standalone, OnPush, inject())
+• LibOrganismoService con HttpClient tipado
+• Organismo model interface desde Swagger
+• Routing con lazy loading
+• Estilos con variables de tema M3
+• LibExpedientesListComponent (standalone, OnPush, inject())
+• LibExpedienteService con HttpClient tipado
+• Expediente model interface desde Swagger
+• Routing con lazy loading
+• Estilos con variables de tema M3
+• LibUsuariosListComponent (standalone, OnPush, inject())
+• LibUsuarioService con HttpClient tipado
+• Usuario model interface desde Swagger
+• Routing con lazy loading
+• Estilos con variables de tema M3
