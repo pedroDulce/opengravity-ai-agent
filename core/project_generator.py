@@ -310,6 +310,14 @@ class ProjectGenerator:
     
             # Parsear respuesta y escribir archivos
             files_written = await self._parse_and_write_files(app_path, response)
+            validation_errors = self._validate_generated_code(app_path)
+            if validation_errors:
+                logger.warning(f"⚠️ Advertencias de validación: {validation_errors}")
+                # Intentar corregir automáticamente
+                for error in validation_errors:
+                    if "no importa LibComponent" in error:
+                        # Intentar añadir el import automáticamente (opcional)
+                        pass
             
             if files_written == 0:
                 logger.warning("⚠️ No se generaron archivos desde la respuesta de la IA")
@@ -650,3 +658,31 @@ class ProjectGenerator:
                 logger.error(f"❌ Error eliminando proyecto: {e}")
                 return False
         return False
+
+
+    def _validate_generated_code(self, app_path: Path) -> List[str]:
+        """Valida que el código generado tiene imports consistentes"""
+        errors = []
+        
+        # Leer app.component.ts si existe
+        app_component = app_path / "src" / "app" / "app.component.ts"
+        if app_component.exists():
+            content = app_component.read_text(encoding='utf-8')
+            
+            # Si usa <lib-hello> pero no importa LibHelloComponent
+            if '<lib-hello>' in content and 'LibHelloComponent' not in content:
+                errors.append("app.component.ts usa <lib-hello> pero no importa LibHelloComponent")
+            
+            # Si es standalone pero imports está vacío o no lista dependencias usadas
+            if 'standalone: true' in content and 'imports: []' in content:
+                errors.append("Componente standalone con imports: [] vacío puede causar errores")
+        
+        # Verificar app.config.ts
+        app_config = app_path / "src" / "app" / "app.config.ts"
+        if app_config.exists():
+            content = app_config.read_text(encoding='utf-8').strip()
+            if not content or content == '// No es necesario para este ejemplo':
+                # Si está vacío, mejor eliminarlo o añadir export
+                app_config.write_text("export {};\n// Configuración mínima para Angular", encoding='utf-8')
+        
+        return errors
