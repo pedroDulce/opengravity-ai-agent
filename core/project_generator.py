@@ -232,70 +232,77 @@ class ProjectGenerator:
             logger.error(f"❌ Error en _create_angular_project: {type(e).__name__}: {e}", exc_info=True)
             return False
 
-    async def _generate_app_code(self, app_path: Path, api_spec: Optional[str],
-                                  description: Optional[str]) -> bool:
+    async def _generate_app_code(self, app_path: Path, api_spec: Optional[str], 
+                              description: Optional[str]) -> bool:
         """Genera componentes, servicios y código de la app usando la IA"""
         self._log_progress("🧠 Generando código de la aplicación...")
-
+        
         try:
-            # Importar aquí para evitar circular imports
             from core.llm_client import LLMClient
             from core.context_manager import ContextManager
-
+            
             client = LLMClient()
             ctx_manager = ContextManager()
-
-            # Obtener contexto corporativo Angular
+            
+            # ✅ CORRECCIÓN: Recuperar contexto corporativo Angular/ATOM
             angular_context = ctx_manager.get_context(
-                "angular component service module routing",
+                "angular component service module routing atom standalone inject signal lib- OnPush",
                 category="angular-guidelines",
                 max_tokens=2000
             )
-
+            
             # Construir prompt para generar estructura de archivos
             prompt = f"""Eres un arquitecto Angular experto en la librería corporativa ATOM.
 
-REGLAS OBLIGATORIAS - NO OMITIR:
-1. TODOS los componentes deben seguir el patrón ATOM:
-   - Selector con prefijo "lib-"
-   - Clase con prefijo "Lib"
-   - standalone: true
-   - changeDetection: ChangeDetectionStrategy.OnPush
-   - Inyección de servicios vía inject()
-   - Usar signal()/computed() para estado
-   - Implementar OnInit, AfterViewInit, OnDestroy
+    REGLAS OBLIGATORIAS - NO OMITIR:
+    1. TODOS los componentes deben seguir el patrón ATOM:
+    - Selector con prefijo "lib-"
+    - Clase con prefijo "Lib"
+    - standalone: true
+    - changeDetection: ChangeDetectionStrategy.OnPush
+    - Inyección de servicios vía inject()
+    - Usar signal()/computed() para estado
+    - Implementar OnInit, AfterViewInit, OnDestroy
 
-2. ESTILOS:
-   - En styles.scss global: @use '@angular/material' as mat; @use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme;
-   - En componentes: estilos acotados con :host, sin CSS inline
+    2. ESTILOS:
+    - En styles.scss global: @use '@angular/material' as mat; @use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme;
+    - En componentes: estilos acotados con :host, sin CSS inline
 
-3. DTOs:
-   - Usar tipos genéricos <T> en clases base
-   - Inputs encapsulados en objeto de estructura
+    3. DTOs:
+    - Usar tipos genéricos <T> en clases base
+    - Inputs encapsulados en objeto de estructura
 
-CONTEXTO CORPORATIVO ATOM:
-{atom_context}
+    {'ESPECIFICACIÓN API:' if api_spec else 'DESCRIPCIÓN DE LA APP:'}
+    {api_spec[:4000] if api_spec else description}
 
-TU TAREA: Generar código Angular para: {description}
+    {angular_context if angular_context else ''}
 
-FORMATO DE RESPUESTA:
-=== FILE: src/app/path/to/file.ts ===
-```typescript
-// código que SIGUE LAS REGLAS ATOM
-```
-"""
+    TU TAREA: Generar la estructura completa de archivos para una aplicación Angular.
+
+    FORMATO DE RESPUESTA (ESTRICTO):
+    === FILE: src/app/path/to/file.ts ===
+    ```typescript
+    <!-- contenido del archivo -->
+    Genera como mínimo:
+
+    app.module.ts o componentes standalone con routing
+    Un componente principal
+    Un servicio para consumir la API
+    Interfaces TypeScript para los modelos
+
+    NO incluyas explicaciones, solo los archivos en el formato especificado."""
             response = await asyncio.to_thread(client.generate, prompt, timeout=180)
-
+    
             # Parsear respuesta y escribir archivos
             files_written = await self._parse_and_write_files(app_path, response)
-
+            
             if files_written == 0:
                 logger.warning("⚠️ No se generaron archivos desde la respuesta de la IA")
                 return False
-
+            
             self._log_progress(f"✅ {files_written} archivos generados")
             return True
-
+            
         except Exception as e:
             logger.error(f"❌ Error en _generate_app_code: {e}", exc_info=True)
             return False

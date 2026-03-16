@@ -20,7 +20,7 @@
 
 Ejemplo de mensaje en Telegram para crear una app Angular con web atom componentes:
 
-/create atom-demo Aplicación Angular corporativa ATOM para la API basada en C:/Users/pedrodulce/develop/generated/swagger-sample-app-demo.json
+/create atom-demo "Aplicación Angular corporativa ATOM para la API basada en C:/Users/pedrodulce/develop/generated/swagger-sample-app-demo.json
 
 REGLAS OBLIGATORIAS ATOM:
 • Componentes standalone con selector 'lib-' y clase 'Lib*'
@@ -58,4 +58,4 @@ GENERAR:
 • LibUsuarioService con HttpClient tipado
 • Usuario model interface desde Swagger
 • Routing con lazy loading
-• Estilos con variables de tema M3
+• Estilos con variables de tema M3"
