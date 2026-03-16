@@ -64,7 +64,7 @@ class LLMProvider(ABC):
 class GroqClient(LLMProvider):
     """Cliente para Groq API (https://console.groq.com)"""
     
-    def __init__(self, api_key: str, model: str = "llama-3.1-8b-instant",
+    def __init__(self, api_key: str, model: str = "llama-3.3-70b-versatile",
                  temperature: float = 0.2, max_tokens: int = 4096,
                  proxy_url: Optional[str] = None):
         self.api_key = api_key
@@ -300,7 +300,7 @@ Uso:
         if self.provider_name == "groq":
             self._client = GroqClient(
                 api_key=kwargs.get("api_key") or os.getenv("GROQ_API_KEY"),
-                model=kwargs.get("model") or os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
+                model=kwargs.get("model") or os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
                 temperature=float(kwargs.get("temperature") or os.getenv("GROQ_TEMPERATURE", "0.2")),
                 max_tokens=int(kwargs.get("max_tokens") or os.getenv("GROQ_MAX_TOKENS", "4096")),
                 proxy_url=self.proxy_url
@@ -318,7 +318,7 @@ Uso:
             logger.warning("⚠️ Gemini seleccionado pero no implementado en esta versión")
             self._client = GroqClient(  # Fallback a Groq
                 api_key=os.getenv("GROQ_API_KEY"),
-                model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
+                model=os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile"),
                 proxy_url=self.proxy_url
             )
             logger.info("🔄 Fallback a Groq")

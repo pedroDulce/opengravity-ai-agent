@@ -111,7 +111,7 @@ class ProjectGenerator:
                 return result
 
             # Paso 4: Iniciar servidor de desarrollo
-            port = await self._start_dev_server(app_path)
+            port = self._start_dev_server(app_path)
             if not port:
                 result["errors"].append("Error iniciando servidor de desarrollo")
                 return result
@@ -254,38 +254,46 @@ class ProjectGenerator:
             # Construir prompt para generar estructura de archivos
             prompt = f"""Eres un arquitecto Angular experto en la librería corporativa ATOM.
 
-    REGLAS OBLIGATORIAS - NO OMITIR:
-    1. TODOS los componentes deben seguir el patrón ATOM:
-    - Selector con prefijo "lib-"
-    - Clase con prefijo "Lib"
-    - standalone: true
-    - changeDetection: ChangeDetectionStrategy.OnPush
-    - Inyección de servicios vía inject()
-    - Usar signal()/computed() para estado
-    - Implementar OnInit, AfterViewInit, OnDestroy
+        REGLAS OBLIGATORIAS - NO OMITIR:
 
-    2. ESTILOS:
-    - En styles.scss global: @use '@angular/material' as mat; @use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme;
-    - En componentes: estilos acotados con :host, sin CSS inline
+        1. IMPORTS EN COMPONENTES STANDALONE (CRÍTICO):
+        - Incluye TODOS los módulos de Angular Material que uses en `imports: []`
+        - Ejemplo: imports: [CommonModule, ReactiveFormsModule, MatCardModule, MatFormFieldModule, MatInputModule]
+        - NO uses componentes de template sin importar su módulo primero
 
-    3. DTOs:
-    - Usar tipos genéricos <T> en clases base
-    - Inputs encapsulados en objeto de estructura
+        2. TIPOS E INTERFACES:
+        - Define TODAS las interfaces/types que uses, o usa tipos inline
+        - NO references tipos como 'AutocompleteEstructura' sin definirlos primero
+        - Prefiere: interface Ciudad {{ id: number; nombre: string; }}
 
-    {'ESPECIFICACIÓN API:' if api_spec else 'DESCRIPCIÓN DE LA APP:'}
-    {api_spec[:4000] if api_spec else description}
+        3. CONSISTENCIA CLASE/TEMPLATE:
+        - Toda propiedad usada en el template DEBE existir como propiedad pública en la clase
+        - Toda función llamada en (click) DEBE estar implementada en la clase
+        - Ejemplo: si el template tiene (click)="onSave()", la clase debe tener onSave(): void {{ ... }}
 
-    {angular_context if angular_context else ''}
+        4. SIGNALS Y ESTADO:
+        - Los signals accesados desde el template deben ser públicos o usar .asObservable()
+        - Ejemplo: readonly ciudades$ = this._ciudades.asObservable();
 
-    TU TAREA: Generar la estructura completa de archivos para una aplicación Angular.
+        5. PATRÓN ATOM:
+        - Selector: 'lib-*', Clase: 'Lib*Component<T> extends LibBaseComponent<T>'
+        - standalone: true, changeDetection: ChangeDetectionStrategy.OnPush
+        - inject() para DI, signal()/computed() para estado
+        - Lifecycle: ngOnInit, ngAfterViewInit, ngOnDestroy
 
-    FORMATO DE RESPUESTA (ESTRICTO):
-    === FILE: src/app/path/to/file.ts ===
-    ```typescript
-    <!-- contenido del archivo -->
-    Genera como mínimo:
+        {'ESPECIFICACIÓN API:' if api_spec else 'DESCRIPCIÓN DE LA APP:'}
+        {api_spec[:4000] if api_spec else description}
 
-    app.module.ts o componentes standalone con routing
+        {angular_context if angular_context else ''}
+
+        TU TAREA: Generar código Angular COMPILABLE para: aplicación de gestión
+
+FORMATO ESTRICTO:
+=== FILE: src/app/path/to/file.ts ===
+```typescript
+Genera como mínimo:
+
+    app.config.ts o app.module.ts con imports de Angular Material
     Un componente principal
     Un servicio para consumir la API
     Interfaces TypeScript para los modelos
@@ -403,8 +411,8 @@ class ProjectGenerator:
             
             # Ejecutar npm install con ruta completa al ejecutable
             process = subprocess.run(
-                [npm_path, "install"],  # Usamos ruta completa, no solo "npm"
-                #[npm_path, "install --legacy-peer-deps --verbose --strict-ssl=false --registry=https://artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/ --//artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/:_auth=bXVmYWNlOmF0b20yMDI0 --@muface-lib:registry=https://artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/ --//artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/:_auth=bXVmYWNlOmF0b20yMDI0"],
+                # [npm_path, "install"],  # Usamos ruta completa, no solo "npm"
+                [npm_path, "install --legacy-peer-deps --verbose --strict-ssl=false --registry=https://artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/ --//artefactos-ic.scae.redsara.es/nexus/repository/registry_npmjs_org/:_auth=bXVmYWNlOmF0b20yMDI0 --@muface-lib:registry=https://artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/ --//artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/:_auth=bXVmYWNlOmF0b20yMDI0"],
                 cwd=str(app_path),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -437,29 +445,53 @@ class ProjectGenerator:
             return False
 
     
-            
     def _start_dev_server(self, app_path: Path) -> Optional[int]:
         """Inicia ng serve en background (síncrono con Popen)"""
         port = 4200
-        self._log_progress(f"🚀 Iniciando servidor en puerto {port}...")
+        self._log_progress(f"🚀 Iniciando servidor de desarrollo en puerto {port}...")
         
         try:
             import subprocess
+            import shutil
             
-            # Preparar entorno
+            # 🛠️ CRÍTICO: Encontrar la ruta completa de 'ng' en Windows
+            ng_path = shutil.which("ng")
+            
+            if not ng_path:
+                # Intentar ruta típica de npm global en Windows
+                ng_cmd_path = Path.home() / "AppData" / "Roaming" / "npm" / "ng.cmd"
+                if ng_cmd_path.exists():
+                    ng_path = str(ng_cmd_path)
+                else:
+                    # Último intento: buscar en PATH manualmente
+                    env_path = os.environ.get("PATH", "")
+                    for path_dir in env_path.split(";"):
+                        candidate = Path(path_dir) / "ng.cmd"
+                        if candidate.exists():
+                            ng_path = str(candidate)
+                            break
+            
+            if not ng_path:
+                logger.error("❌ Angular CLI no encontrado para ng serve")
+                logger.error(f"💡 PATH: {os.environ.get('PATH', '')[:300]}...")
+                return None
+            
+            logger.info(f"✅ Usando ng en: {ng_path} para serve")
+            
+            # Preparar entorno con PATH que incluya npm global
             env = os.environ.copy()
-            npm_global_path = Path.home() / "AppData" / "Roaming" / "npm"
-            if str(npm_global_path) not in env.get("PATH", ""):
-                env["PATH"] = str(npm_global_path) + ";" + env.get("PATH", "")
+            npm_global_path = str(Path.home() / "AppData" / "Roaming" / "npm")
+            if npm_global_path not in env.get("PATH", ""):
+                env["PATH"] = npm_global_path + ";" + env.get("PATH", "")
             
-            # Iniciar ng serve en background con Popen
+            # Iniciar ng serve en background con Popen usando ruta completa
             process = subprocess.Popen(
-                ["ng", "serve", "--port", str(port), "--host", "0.0.0.0", "--disable-host-check"],
+                [ng_path, "serve", "--port", str(port), "--host", "0.0.0.0", "--disable-host-check"],
                 cwd=str(app_path),
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0  # Windows: sin ventana console
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
             
             # Esperar a que compile (leer stdout hasta "Compiled successfully")
@@ -484,12 +516,13 @@ class ProjectGenerator:
             
             return port
             
-        except FileNotFoundError:
-            logger.error("❌ Angular CLI no encontrado para ng serve")
+        except FileNotFoundError as e:
+            logger.error(f"❌ Angular CLI no encontrado: {e}")
             return None
         except Exception as e:
             logger.error(f"❌ Error en _start_dev_server: {e}")
             return None
+
 
     def cleanup(self, app_name: str) -> bool:
         """Elimina un proyecto generado (para limpieza)"""

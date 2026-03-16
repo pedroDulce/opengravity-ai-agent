@@ -164,7 +164,7 @@ Dado que estás en una **VDI con Windows 11 y sin Docker**, aquí tienes algunos
 ### 🧠 Multi-LLM Support
 | Proveedor | Modelo | Gratis | Velocidad |
 |-----------|--------|--------|-----------|
-| **Groq** | `llama-3.1-8b-instant` | ✅ ~30 req/min | ⚡ Muy rápido |
+| **Groq** | `llama-3.3-70b-versatile` | ✅ ~30 req/min | ⚡ Muy rápido |
 | **OpenRouter** | `meta-llama/llama-3.1-8b-instruct:free` | ✅ ~200 req/día | 🐢 Moderado |
 | **Gemini** | `gemini-2.0-flash` | ⚠️ Con quota | ⚡ Rápido |
 

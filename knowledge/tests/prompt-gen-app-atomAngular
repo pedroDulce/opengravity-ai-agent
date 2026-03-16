@@ -1,3 +1,10 @@
+# ❌ INCORRECTO:
+port = await self._start_dev_server(app_path)
+
+# ✅ CORRECTO (sin await, es método síncrono):
+port = self._start_dev_server(app_path)
+
+
 /create atom-petstore "Aplicación Angular ATOM para Petstore API:
 - Componentes standalone con prefijo lib-
 - Inyección vía inject(), estado con signal()/computed()
