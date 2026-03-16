@@ -653,6 +653,9 @@ class ProjectGenerator:
         • Imports consistentes en componentes standalone
         • Estilos en archivo .scss separado (no CSS inline)
         """
+
+        import re
+        
         errors = []
         warnings = []
         app_src = app_path / "src" / "app"
