@@ -157,57 +157,92 @@ class ProjectGenerator:
                 max_tokens=2000
             )
             
-            # Construir prompt para generar estructura de archivos
             prompt = f"""Eres un arquitecto Angular experto en la librería corporativa ATOM.
 
             REGLAS OBLIGATORIAS - NO OMITIR:
 
-            1. IMPORTS EN COMPONENTES STANDALONE (CRÍTICO):
-            - Si un componente usa OTRO componente en su template, DEBE importarlo en `imports: []`
-            - Ejemplo: Si app.component.ts tiene <lib-hello> en su template:
-                ```typescript
-                @Component({{
-                selector: 'app-root',
-                standalone: true,
-                imports: [CommonModule, MatCardModule, LibHelloComponent],  // ← IMPORTAR LibHelloComponent
-                template: `<lib-hello></lib-hello>`
-                }})
-                ```
-            - NO uses <lib-hello> sin importar LibHelloComponent primero
+            1. IMPORTS DE ANGULAR MATERIAL (CRÍTICO):
+            - Si usas mat-card, mat-form-field, etc., DEBES importar el módulo correspondiente:
+                import {{ MatCardModule }} from '@angular/material/card';
+                import {{ MatFormFieldModule }} from '@angular/material/form-field';
+            - Y añadirlo en imports: [] del componente standalone:
+                imports: [CommonModule, MatCardModule, ...]
 
-            2. app.config.ts (OPCIONAL):
-            - Si no usas ApplicationConfig, OMITE app.config.ts o déjalo con:
-                ```typescript
-                // No se requiere configuración adicional para esta app
-                export {{}};
-                ```
-            - NO dejes un archivo vacío sin export
+            2. FORMATO DE imports: [] EN COMPONENTES STANDALONE:
+            - DEBE ser un array válido de TypeScript:
+                imports: [CommonModule, MatCardModule, LibHelloComponent]  // ← Sin comillas, sin strings
+            - NO usar: imports: ["MatCardModule"]  // ❌ Esto causa TS-991010
 
-            3. FORMATO DE ARCHIVOS (ESTRICTO):
-            Para CADA archivo, usa EXACTAMENTE:
-            
+            3. app.config.ts (OPCIONAL - RECOMENDADO OMITIR PARA APPS SIMPLES):
+            - Si la app es minimalista, OMITE app.config.ts completamente
+            - O si lo generas, debe exportar algo válido:
+                export const appConfig: ApplicationConfig = {{ ... }};
+                // O mínimo: export {{}};  // ← Para evitar TS2305
+
+            4. CONSISTENCIA CLASE/TEMPLATE:
+            - Si el template usa <lib-hello>, la clase DEBE importar LibHelloComponent
+            - Si usa [(ngModel)], importar FormsModule
+            - Si usa formControlName, importar ReactiveFormsModule
+
+            5. PATRÓN ATOM:
+            - Selector: 'lib-*', Clase: 'Lib*Component<T>', standalone: true
+            - changeDetection: ChangeDetectionStrategy.OnPush
+            - inject() para DI, signal()/computed() para estado (recomendado)
+
+            DESCRIPCIÓN DE LA APP:
+            {description}
+
+            {angular_context if angular_context else ''}
+
+            TU TAREA: Generar código Angular COMPILABLE para aplicación minimalista.
+
+            FORMATO ESTRICTO:
             === FILE: src/app/app.component.ts ===
             ```typescript
             import {{ Component }} from '@angular/core';
             import {{ CommonModule }} from '@angular/common';
-            import {{ MatCardModule }} from '@angular/material/card';
-            import {{ LibHelloComponent }} from './lib-hello/lib-hello.component';  // ← IMPORTAR
+            import {{ MatCardModule }} from '@angular/material/card';  // ← Import explícito
+            import {{ LibHelloComponent }} from './lib-hello/lib-hello.component';
 
             @Component({{
-                selector: 'app-root',
-                standalone: true,
-                imports: [CommonModule, MatCardModule, LibHelloComponent],  // ← LISTAR AQUÍ
-                template: `<lib-hello></lib-hello>`
+            selector: 'app-root',
+            standalone: true,
+            imports: [CommonModule, MatCardModule, LibHelloComponent],  // ← Array válido, sin strings
+            template: `<lib-hello></lib-hello>`
             }})
             export class AppComponent {{}}
-                PATRÓN ATOM:
-                    Selector: 'lib-', Clase: 'LibComponent', standalone: true, OnPush, inject(), signal()
 
-            DESCRIPCIÓN DE LA APP:
-            {description}
-            {angular_context if angular_context else ''}
-            TU TAREA: Generar código Angular COMPILABLE para aplicación minimalista con LibHelloComponent.
+            === FILE: src/app/lib-hello/lib-hello.component.ts ===
+
+            import {{ Component, ChangeDetectionStrategy }} from '@angular/core';
+            import {{ CommonModule }} from '@angular/common';
+            import {{ MatCardModule }} from '@angular/material/card';
+
+            @Component({{
+            selector: 'lib-hello',
+            standalone: true,
+            imports: [CommonModule, MatCardModule],
+            template: `
+                <mat-card>
+                <mat-card-content>Hola ATOM</mat-card-content>
+                </mat-card>
+            `,
+            changeDetection: ChangeDetectionStrategy.OnPush
+            }})
+            export class LibHelloComponent {{}}
+
+            === FILE: src/styles.scss ===
+
+            @use '@angular/material' as mat;
+            @use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme;
+
+            @include mat.core();
+
+            :root {{
+            @include mat.all-component-themes(muf-theme.$light-theme);
+            }}
             RESPONDE SOLO CON ARCHIVOS EN FORMATO === FILE: ... ===, SIN EXPLICACIONES."""
+
             # ✅ CORRECTO: Usar asyncio.wait_for para manejar el timeout
             response = await asyncio.wait_for(
                 asyncio.to_thread(client.generate, prompt),
@@ -290,14 +325,14 @@ class ProjectGenerator:
             
             # 🛠️ CRÍTICO: Usar --skip-install para evitar npm install automático de ng new
             # Luego instalaremos manualmente con nuestro .npmrc configurado para Nexus/ATOM
+            # En el comando ng new, añadir --skip-install:
             cmd = [
-                ng_path,
-                "new", app_name,
+                ng_path, "new", app_name,
                 "--routing", "true",
                 "--style", "scss",
                 "--skip-git", "true",
                 "--minimal", "false",
-                "--skip-install", "true"  # ← ¡Esto evita el npm install automático!
+                "--skip-install", "true"  # Evita npm install automático
             ]
             
             logger.info(f"🔧 Ejecutando: {' '.join(cmd)}")
@@ -376,17 +411,25 @@ class ProjectGenerator:
         files_written = 0
         app_src = app_path / "src" / "app"
         
-        # 🛠️ LOGGING: Ver qué respondió la IA
+        # Logging de la respuesta de la IA
         logger.info(f"🔍 Respuesta de IA recibida ({len(response)} chars)")
         
-        # 🛠️ PATRÓN PRINCIPAL: Extrae ruta Y contenido del formato ### FILE: ruta ===
-        # Soporta: ### FILE: src/app/x.ts ===, === FILE: src/app/x.ts ===, // FILE: src/app/x.ts
-        file_pattern = r'(?:###|===|//)\s*FILE:\s*(src/app/[^\s\n]+?)\s*(?:===)?\s*\n\s*```(?:\w+)?\s*\n(.*?)```'
+        # 🛠️ PATRÓN FLEXIBLE: Soporta múltiples saltos de línea y formatos
+        # Explicación:
+        # (?:###|===|//)       → Prefijos soportados para FILE:
+        # \s*FILE:\s*          → "FILE:" con espacios opcionales
+        # ([^\s\n]+?)          → Captura la ruta del archivo (grupo 1)
+        # (?:===)?             → === opcional de cierre
+        # [\s\n]*              → ← CLAVE: cualquier combinación de espacios/saltos de línea
+        # ```(?:\w+)?\s*\n     → Inicio del bloque de código markdown
+        # (.*?)                → Contenido del archivo (grupo 2, no greedy)
+        # ```                  → Fin del bloque de código
+        file_pattern = r'(?:###|===|//)\s*FILE:\s*([^\s\n]+?)\s*(?:===)?[\s\n]*```(?:\w+)?\s*\n(.*?)```'
         
         matches = re.findall(file_pattern, response, re.DOTALL | re.IGNORECASE)
         
         if matches:
-            logger.info(f"✅ Patrón principal encontró {len(matches)} archivos con ruta explícita")
+            logger.info(f"✅ Patrón flexible encontró {len(matches)} archivos")
             
             for file_path, content in matches:
                 try:
@@ -399,7 +442,12 @@ class ProjectGenerator:
                     content = re.sub(r'```$', '', content.strip())
                     
                     # Construir ruta completa
-                    full_path = app_src.parent.parent / file_path.strip()
+                    if file_path.strip().startswith('src/app/'):
+                        full_path = app_src.parent.parent / file_path.strip()
+                    elif file_path.strip() == 'src/styles.scss':
+                        full_path = app_src.parent / 'styles.scss'
+                    else:
+                        full_path = app_path / file_path.strip()
                     
                     # Crear directorios padre si no existen
                     full_path.parent.mkdir(parents=True, exist_ok=True)
@@ -413,84 +461,17 @@ class ProjectGenerator:
                 except Exception as e:
                     logger.warning(f"⚠️ No se pudo escribir {file_path}: {e}")
                     continue
-        
-        # 🛠️ FALLBACK: Si no encontró con patrón principal, intentar extraer bloques de código con inferencia de nombre
-        if files_written == 0:
-            logger.warning("⚠️ Patrón principal no encontró archivos. Intentando fallback...")
-            
-            # Extraer bloques de código y comentarios que puedan contener rutas
-            code_blocks = re.findall(
-                r'(?:###|===|//)\s*FILE:\s*([^\s\n]+)\s*(?:===)?\s*\n\s*```(?:\w+)?\s*\n(.*?)```',
-                response, re.DOTALL | re.IGNORECASE
-            )
-            
-            for file_path, content in code_blocks:
-                try:
-                    if files_written >= self.max_files:
-                        break
-                    
-                    content = re.sub(r'^```(?:\w+)?\s*', '', content.strip())
-                    content = re.sub(r'```$', '', content.strip())
-                    
-                    # Si la ruta no empieza con src/app, asumirla relativa a app/
-                    if not file_path.strip().startswith('src/'):
-                        file_path = f"src/app/{file_path.strip()}"
-                    
-                    full_path = app_src.parent.parent / file_path.strip()
-                    full_path.parent.mkdir(parents=True, exist_ok=True)
-                    full_path.write_text(content, encoding='utf-8')
-                    files_written += 1
-                    
-                    logger.info(f"📝 Fallback escrito: {file_path.strip()}")
-                    
-                except Exception as e:
-                    logger.warning(f"⚠️ Fallback falló: {e}")
-        
-        # 🛠️ ÚLTIMO RECURSO: Extraer cualquier bloque de código y nombrarlo genéricamente
-        if files_written == 0:
-            logger.warning("⚠️ No se encontraron archivos con rutas. Extrayendo bloques de código genéricos...")
-            
-            code_blocks = re.findall(r'```(?:typescript|ts|html|scss)?\s*\n(.*?)```', response, re.DOTALL)
-            
-            for i, content in enumerate(code_blocks[:10]):  # Máximo 10 bloques
-                try:
-                    content = content.strip()
-                    
-                    # Inferir extensión y nombre por contenido
-                    if '<template>' in content or '@Component' in content:
-                        ext = 'ts'
-                        filename = f'component-{i}.component.ts'
-                    elif '@Injectable' in content:
-                        ext = 'ts'
-                        filename = f'service-{i}.service.ts'
-                    elif '<div' in content or '<mat-' in content:
-                        ext = 'html'
-                        filename = f'template-{i}.component.html'
-                    elif '{' in content and ('.scss' in content.lower() or 'style' in content.lower()):
-                        ext = 'scss'
-                        filename = f'styles-{i}.scss'
-                    else:
-                        ext = 'ts'
-                        filename = f'generated-{i}.ts'
-                    
-                    full_path = app_src / filename
-                    full_path.parent.mkdir(parents=True, exist_ok=True)
-                    full_path.write_text(content, encoding='utf-8')
-                    files_written += 1
-                    
-                    logger.info(f"📝 Genérico escrito: {filename}")
-                    
-                except Exception as e:
-                    logger.warning(f"⚠️ Genérico falló: {e}")
+        else:
+            logger.warning("⚠️ Patrón flexible no encontró archivos. Respuesta preview:")
+            logger.warning(response[:500])
         
         if files_written == 0:
-            logger.error(f"❌ No se pudo extraer ningún archivo. Respuesta:\n{response[:2000]}")
+            logger.error(f"❌ No se pudo extraer ningún archivo. Respuesta completa:\n{response[:2000]}")
         
         return files_written
 
-
     def _install_dependencies(self, app_path: Path) -> bool:
-        """Instala dependencias con npm install (usando .npmrc ya configurado)"""
+        """Instala dependencias con npm install (configuración híbrida para proxy SARA)"""
         self._log_progress("📦 Instalando dependencias ATOM (puede tardar 15-20 min)...")
         
         try:
@@ -503,9 +484,8 @@ class ProjectGenerator:
                 npm_cmd_path = Path.home() / "AppData" / "Roaming" / "npm" / "npm.cmd"
                 if npm_cmd_path.exists():
                     npm_path = str(npm_cmd_path)
-            
             if not npm_path:
-                logger.error("❌ No se encontró 'npm'")
+                logger.error("❌ npm no encontrado")
                 return False
             
             logger.info(f"✅ Usando npm en: {npm_path}")
@@ -516,22 +496,61 @@ class ProjectGenerator:
             if npm_global_path not in env.get("PATH", ""):
                 env["PATH"] = npm_global_path + ";" + env.get("PATH", "")
             
-            # Ejecutar npm install (el .npmrc ya está en la carpeta del proyecto)
+            # 🛠️ CRÍTICO: Crear .npmrc con configuración HÍBRIDA
+            # - Registry público para paquetes genéricos (evita 504 de Nexus)
+            # - Registry corporativo CON AUTH solo para @muface-lib
+            npmrc_path = app_path / ".npmrc"
+            npmrc_content = """# Registry principal: npmjs.org PÚBLICO (evita 504 de Nexus para paquetes genéricos)
+    registry=https://registry.npmjs.org/
+
+    # Registry corporativo SOLO para librería ATOM @muface-lib
+    @muface-lib:registry=https://artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/
+    //artefactos-ic.scae.redsara.es/nexus/repository/ad-npm/:_auth=bXVmYWNlOmF0b20yMDI0
+
+    # Configuración de conexión robusta para proxy corporativo
+    strict-ssl=false
+    fetch-retries=10
+    fetch-retry-mintimeout=20000
+    fetch-retry-maxtimeout=600000
+    fetch-timeout=300000
+
+    # legacy-peer-deps para compatibilidad Angular Material + ATOM
+    legacy-peer-deps=true
+
+    # Sin progreso para evitar problemas de buffering en subprocess
+    progress=false
+    """
+            npmrc_path.write_text(npmrc_content, encoding='utf-8')
+            logger.info(f"✅ .npmrc híbrido creado: registry público + @muface-lib corporativo")
+            
+            # Ejecutar npm install con logging en tiempo real
             cmd = [npm_path, "install", "--legacy-peer-deps", "--no-progress"]
             logger.info(f"🔧 Ejecutando: {' '.join(cmd)}")
             
-            process = subprocess.run(
+            # Usar Popen para ver output en vivo y detectar errores temprano
+            process = subprocess.Popen(
                 cmd,
                 cwd=str(app_path),
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=1800,  # 30 minutos
-                env=env
+                stderr=subprocess.STDOUT,
+                env=env,
+                text=True,
+                bufsize=1,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
             
+            # Leer output línea por línea y loguear
+            for line in process.stdout:
+                stripped = line.strip()
+                if stripped:
+                    # Loguear solo líneas relevantes (evitar spam)
+                    if any(kw in stripped.lower() for kw in ['error', 'warn', 'deprecated', 'added', 'removed', 'changed']):
+                        logger.info(f"📦 npm: {stripped}")
+            
+            process.wait(timeout=1800)
+            
             if process.returncode != 0:
-                stderr_text = process.stderr.decode('utf-8', errors='ignore')[:500]
-                logger.error(f"❌ npm install falló: {stderr_text}")
+                logger.error(f"❌ npm install falló con código {process.returncode}")
                 return False
             
             self._log_progress("✅ Dependencias ATOM instaladas")
@@ -542,8 +561,7 @@ class ProjectGenerator:
             return False
         except Exception as e:
             logger.error(f"❌ Error en _install_dependencies: {e}", exc_info=True)
-            return False
-    
+            return False    
 
     def _start_dev_server(self, app_path: Path) -> Optional[int]:
         """Inicia ng serve en background (síncrono con Popen)"""
@@ -655,7 +673,7 @@ class ProjectGenerator:
         """
 
         import re
-        
+
         errors = []
         warnings = []
         app_src = app_path / "src" / "app"
