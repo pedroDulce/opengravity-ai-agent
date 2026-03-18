@@ -954,12 +954,12 @@ class ProjectGenerator:
         }
         """
     
-    # Añadir fallback solo si no existe ya un theme definido
-    if "mat.define-light-theme" not in content and "mat.all-component-themes" not in content:
-        content += fallback_theme
-        logger.info("✅ Auto-fix: styles.scss - fallback theme añadido correctamente")
-    
-    styles_file.write_text(content, encoding='utf-8')
+        # Añadir fallback solo si no existe ya un theme definido
+        if "mat.define-light-theme" not in content and "mat.all-component-themes" not in content:
+            content += fallback_theme
+            logger.info("✅ Auto-fix: styles.scss - fallback theme añadido correctamente")
+        
+        styles_file.write_text(content, encoding='utf-8')
         
         return fixes
 
