@@ -8,6 +8,7 @@ import os
 import subprocess
 import asyncio
 import logging
+import re
 import shutil
 from pathlib import Path
 from typing import Optional, List, Callable, Dict
@@ -177,25 +178,10 @@ class ProjectGenerator:
                 imports: [CommonModule, MatCardModule, LibHelloComponent]
             - NO usar comillas ni strings: imports: ["MatCardModule"] ❌
 
-            3. ESTILOS GLOBALES (styles.scss):
-            - Si @muface-lib no está disponible, usar fallback:
-                @use '@angular/material' as mat;
-                // @use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme; // ← Opcional, comentar si no disponible
-                
-                @include mat.core();
-                :root {{
-                @include mat.all-component-themes(mat.define-light-theme({{
-                    color: (primary: mat.define-palette(mat.$indigo-palette)),
-                }}));
-                }}
-
-            4. ARCHIVOS .scss POR COMPONENTE:
-            - Si generas un componente lib-*, DEBES generar también su .scss
-            - Ejemplo: lib-hello.component.ts → lib-hello.component.scss
-
-            5. CONSISTENCIA CLASE/TEMPLATE:
-            - Si el template usa <lib-hello>, la clase DEBE importar LibHelloComponent
-            - Si usa mat-card, importar MatCardModule
+            3. ESTILOS GLOBALES (styles.scss) - Angular Material 19+ API M3:
+            - USAR @include mat.theme(...) NO mat.define-light-theme(...)
+            - Los colores usan paletas M3: mat.$azure-palette, mat.$indigo-palette
+            - Usar variables CSS M3: var(--mat-sys-surface)
 
             DESCRIPCIÓN DE LA APP:
             {description}
@@ -206,7 +192,7 @@ class ProjectGenerator:
 
             FORMATO ESTRICTO (sin saltos extra):
             === FILE: src/app/app.component.ts ===
-            ```typescript
+
             import {{ Component }} from '@angular/core';
             import {{ CommonModule }} from '@angular/common';
             import {{ MatCardModule }} from '@angular/material/card';
@@ -219,9 +205,9 @@ class ProjectGenerator:
             template: `<lib-hello></lib-hello>`
             }})
             export class AppComponent {{}}
-            
+
             === FILE: src/app/lib-hello/lib-hello.component.ts ===
-            typescript
+
             import {{ Component, ChangeDetectionStrategy }} from '@angular/core';
             import {{ CommonModule }} from '@angular/common';
             import {{ MatCardModule }} from '@angular/material/card';
@@ -240,26 +226,48 @@ class ProjectGenerator:
             export class LibHelloComponent {{}}
 
             === FILE: src/app/lib-hello/lib-hello.component.scss ===
-            scss
+
             :host {{
-                display: block;
-                padding: 1rem;
-                }}
-                mat-card {{
-                width: 100%;
-                }}
-            
-            === FILE: src/styles.scss ===
-            scss
-            @use '@angular/material' as mat;
-            // Fallback si @muface-lib no está disponible
-            @include mat.core();
-            :root {{
-            @include mat.all-component-themes(mat.define-light-theme({{
-                color: (primary: mat.define-palette(mat.$indigo-palette)),
-            }}));
+            display: block;
+            padding: 1rem;
             }}
+            mat-card {{
+            width: 100%;
+            }}
+
+            === FILE: src/styles.scss ===
+
+            @use '@angular/material' as mat;
+
+            @include mat.core();
+
+            :root {{
+            @include mat.theme((
+                color: (
+                primary: mat.$azure-palette,
+                tertiary: mat.$blue-palette,
+                ),
+                typography: Roboto,
+                density: 0,
+            ));
+            }}
+
+            body {{
+            margin: 0;
+            font-family: Roboto, "Helvetica Neue", sans-serif;
+            background-color: var(--mat-sys-surface);
+            color: var(--mat-sys-on-surface);
+            }}
+
+            REGLAS PARA styles.scss (Angular Material 19+):
+            1. USAR @include mat.theme(...) NO mat.define-light-theme(...)
+            2. Los colores usan paletas M3: mat.$azure-palette, mat.$indigo-palette, etc.
+            3. Usar variables CSS M3: var(--mat-sys-surface), var(--mat-sys-on-surface)
+            4. NO usar funciones deprecated de M2: define-light-theme, define-dark-theme
+
             RESPONDE SOLO CON ARCHIVOS EN FORMATO === FILE: ... ===, SIN EXPLICACIONES."""
+
+
             
 
             # ✅ CORRECTO: Usar asyncio.wait_for para manejar el timeout
@@ -599,92 +607,95 @@ class ProjectGenerator:
             return False    
 
     def _start_dev_server(self, app_path: Path) -> Optional[int]:
-        """Inicia ng serve en background (síncrono con Popen)"""
+        """Inicia ng serve con logging robusto y timeout"""
         port = 4200
         self._log_progress(f"🚀 Iniciando servidor de desarrollo en puerto {port}...")
         
         try:
             import subprocess
             import shutil
+            import time
             
-            # 🛠️ CRÍTICO: Encontrar la ruta completa de 'ng' en Windows
+            # Encontrar ng
             ng_path = shutil.which("ng")
-            
             if not ng_path:
-                # Intentar ruta típica de npm global en Windows
                 ng_cmd_path = Path.home() / "AppData" / "Roaming" / "npm" / "ng.cmd"
                 if ng_cmd_path.exists():
                     ng_path = str(ng_cmd_path)
-                else:
-                    # Último intento: buscar en PATH manualmente
-                    env_path = os.environ.get("PATH", "")
-                    for path_dir in env_path.split(";"):
-                        candidate = Path(path_dir) / "ng.cmd"
-                        if candidate.exists():
-                            ng_path = str(candidate)
-                            break
-            
             if not ng_path:
                 logger.error("❌ Angular CLI no encontrado para ng serve")
-                logger.error(f"💡 PATH: {os.environ.get('PATH', '')[:300]}...")
                 return None
             
-            logger.info(f"✅ Usando ng en: {ng_path} para serve")
-            
-            # Preparar entorno con PATH que incluya npm global
+            # Preparar entorno
             env = os.environ.copy()
             npm_global_path = str(Path.home() / "AppData" / "Roaming" / "npm")
             if npm_global_path not in env.get("PATH", ""):
                 env["PATH"] = npm_global_path + ";" + env.get("PATH", "")
             
-            # Iniciar ng serve en background con Popen usando ruta completa
+            # 🛠️ CLAVE: Usar text=True, bufsize=1, y leer stderr por separado
             process = subprocess.Popen(
                 [ng_path, "serve", "--port", str(port), "--host", "0.0.0.0", "--disable-host-check"],
                 cwd=str(app_path),
                 env=env,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                stderr=subprocess.PIPE,  # ← Leer stderr por separado
+                text=True,               # ← Recibir texto, no bytes
+                bufsize=1,               # ← Line-buffered
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
             
-            # Esperar a que compile (leer stdout hasta "Compiled successfully")
+            # Esperar compilación con logging de TODO el output
             compiled = False
             start_wait = datetime.now()
+            last_output = datetime.now()
+            error_lines = []  # Acumular posibles errores
             
-            while not compiled and (datetime.now() - start_wait).total_seconds() < 120:
-                line = process.stdout.readline()
-                if not line:
-                    break
-                line_str = line.decode('utf-8', errors='ignore').strip()
+            while not compiled and (datetime.now() - start_wait).total_seconds() < 300:  # 5 min
+                # Leer stdout
+                stdout_line = process.stdout.readline()
+                if stdout_line:
+                    line_str = stdout_line.strip()
+                    last_output = datetime.now()
+                    logger.info(f"📦 ng serve [OUT]: {line_str}")
+                    
+                    if "Compiled successfully" in line_str:
+                        compiled = True
+                        self._log_progress("✅ Servidor compilado y corriendo")
+                        break
+                    elif "X [ERROR]" in line_str or "error TS" in line_str.lower():
+                        error_lines.append(line_str)
+                        logger.warning(f"⚠️ Error de compilación: {line_str}")
                 
-                if "Compiled successfully" in line_str:
-                    compiled = True
-                    self._log_progress("✅ Servidor compilado y corriendo")
+                # Leer stderr (a veces los errores van aquí)
+                stderr_line = process.stderr.readline()
+                if stderr_line:
+                    line_str = stderr_line.strip()
+                    last_output = datetime.now()
+                    logger.error(f"📦 ng serve [ERR]: {line_str}")
+                    error_lines.append(line_str)
+                
+                # Timeout de inactividad: si 90s sin output, asumir bloqueo
+                if (datetime.now() - last_output).total_seconds() > 90:
+                    logger.warning("⚠️ ng serve sin output por 90s, asumiendo bloqueo de compilación")
                     break
-                elif "expected" in line_str and ")" in line_str:
-                    # Intentar identificar qué archivo tiene el error
-                    error_match = re.search(r'\[plugin angular-compiler\].*?File \'([^\']+)\'', line_str)
-                    if error_match:
-                        error_file = Path(error_match.group(1))
-                        if error_file.exists():
-                            content = error_file.read_text(encoding='utf-8')
-                            logger.error(f"🔍 DEBUG - Contenido de {error_file.name}:")
-                            logger.error(f"   {content[:2000]}...")  # Primeros 2000 chars
-                elif "error" in line_str.lower() and "Compiled" not in line_str:
-                    logger.warning(f"⚠️ ng serve: {line_str}")
+                
+                time.sleep(0.1)  # Pequeña pausa para no consumir CPU
             
+            # Si no compiló, loguear errores acumulados
             if not compiled:
-                logger.warning("⚠️ El servidor puede no estar compilado correctamente")
+                if error_lines:
+                    logger.error(f"❌ ng serve falló con {len(error_lines)} errores:")
+                    for err in error_lines[:10]:  # Primeros 10 errores
+                        logger.error(f"   {err}")
+                else:
+                    logger.error("❌ ng serve no reportó éxito ni errores en 300s")
+                return None
             
             return port
             
-        except FileNotFoundError as e:
-            logger.error(f"❌ Angular CLI no encontrado: {e}")
-            return None
         except Exception as e:
-            logger.error(f"❌ Error en _start_dev_server: {e}")
+            logger.error(f"❌ Error en _start_dev_server: {e}", exc_info=True)
             return None
-
 
     def cleanup(self, app_name: str) -> bool:
         """Elimina un proyecto generado (para limpieza)"""
@@ -918,30 +929,37 @@ class ProjectGenerator:
                 fixes += 1
                 logger.info(f"✅ Auto-fix: Creado {scss_file.name}")
         
-        # 3. Corregir styles.scss si usa @muface-lib no disponible
-        styles_file = app_path / "src" / "styles.scss"
-        if styles_file.exists():
-            content = styles_file.read_text(encoding='utf-8')
-            if "@muface-lib" in content and "@use '@angular/material'" in content:
-                # Comentar línea de muface y usar fallback
-                content = content.replace(
-                    "@use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme;",
-                    "// @use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme; // ← Comentado si no disponible"
-                )
-                # Añadir fallback theme si no existe
-                if "mat.define-light-theme" not in content:
-                    fallback = """
-                    // Fallback theme si muf-theme no está disponible
-                    :root {
-                    @include mat.all-component-themes(mat.define-light-theme((
-                        color: (primary: mat.define-palette(mat.$indigo-palette)),
-                    )));
-                    }
-                    """
-                    content += fallback
-                styles_file.write_text(content, encoding='utf-8')
-                fixes += 1
-                logger.info("✅ Auto-fix: styles.scss - fallback theme añadido")
+        # En la sección que corrige styles.scss:
+
+        if "@muface-lib" in content and "@use '@angular/material'" in content:
+            # Comentar línea de muface si no está disponible
+            content = content.replace(
+                "@use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme;",
+                "// @use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme; // ← Comentado si no disponible"
+            )
+            
+            # ✅ CORRECCIÓN: Generar fallback theme COMPLETO y bien cerrado
+            fallback_theme = """
+        // Fallback theme si muf-theme no está disponible
+        :root {
+        @include mat.all-component-themes(
+            mat.define-light-theme((
+            color: (
+                primary: mat.define-palette(mat.$indigo-palette),
+                accent: mat.define-palette(mat.$pink-palette, A200, A100, A400),
+                warn: mat.define-palette(mat.$red-palette),
+            ),
+            ))
+        );
+        }
+        """
+    
+    # Añadir fallback solo si no existe ya un theme definido
+    if "mat.define-light-theme" not in content and "mat.all-component-themes" not in content:
+        content += fallback_theme
+        logger.info("✅ Auto-fix: styles.scss - fallback theme añadido correctamente")
+    
+    styles_file.write_text(content, encoding='utf-8')
         
         return fixes
 

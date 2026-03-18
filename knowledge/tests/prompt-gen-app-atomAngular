@@ -69,3 +69,38 @@ GENERAR:
 • Routing con lazy loading
 • Estilos con variables de tema M3"
 
+
+# 1. ¿Hay un proceso node/ng corriendo?
+Get-Process node, ng -ErrorAction SilentlyContinue | Select-Object Name, Id, CPU
+
+# 2. ¿El puerto 4200 está en uso?
+netstat -ano | Select-String ":4200"
+
+# 3. ¿La carpeta de compilación está creciendo?
+Get-ChildItem "C:/Users/pedrodulce/develop/generated/test-demo/.angular" -Recurse -Directory -ErrorAction SilentlyContinue | Measure-Object
+
+# 4. Probar conexión HTTP (puede fallar mientras compila)
+Invoke-WebRequest -Uri "http://localhost:4200" -UseBasicParsing -TimeoutSec 2 -ErrorAction SilentlyContinue
+
+# 1. Ir a la carpeta del proyecto generado
+cd C:/Users/pedrodulce/develop/generated/test-demo
+
+# 2. Detener el proceso node que está bloqueado (opcional, pero recomendado)
+Stop-Process -Id 13296 -Force -ErrorAction SilentlyContinue
+
+# 3. Ejecutar ng serve MANUALMENTE para ver output completo
+ng serve --port 4200 --host 0.0.0.0 --disable-host-check
+
+# 👀 Observa el output completo:
+# - Si hay errores de compilación, aparecerán aquí
+# - Si dice "Compiled successfully", la app funcionará
+# - Si se queda "colgado" de nuevo, el problema es más profundo
+
+# Verificar que @angular/material está instalado
+npm list @angular/material @angular/cdk
+
+# Si no aparece o hay errores, reinstalar:
+npm install @angular/material@^19.0.0 @angular/cdk@^19.0.0 --legacy-peer-deps
+
+
+
