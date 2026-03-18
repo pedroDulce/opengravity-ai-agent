@@ -19,7 +19,6 @@ Usos del agente:
 - Estilos con tema M3: @use '@muface-lib/muface-lib/estilos/m3-theme'"
 
 /create test-demo "App Angular ATOM minimalista con:
-
     - Un componente LibHelloComponent standalone
     - Muestra 'Hola ATOM' en un mat-card
     - Sin servicios, sin APIs, sin formularios
@@ -69,3 +68,4 @@ GENERAR:
 • Usuario model interface desde Swagger
 • Routing con lazy loading
 • Estilos con variables de tema M3"
+

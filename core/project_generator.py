@@ -162,32 +162,36 @@ class ProjectGenerator:
             REGLAS OBLIGATORIAS - NO OMITIR:
 
             1. IMPORTS DE ANGULAR MATERIAL (CRÍTICO):
-            - Si usas mat-card, mat-form-field, etc., DEBES importar el módulo correspondiente:
+            - Si usas mat-card, DEBES importar el módulo EXACTO:
                 import {{ MatCardModule }} from '@angular/material/card';
-                import {{ MatFormFieldModule }} from '@angular/material/form-field';
-            - Y añadirlo en imports: [] del componente standalone:
-                imports: [CommonModule, MatCardModule, ...]
+            - Y añadirlo en imports: [] como REFERENCIA DE CLASE, NO string:
+                imports: [CommonModule, MatCardModule]  // ← ✅ Correcto
+                // NO: imports: ["MatCardModule"]  // ← ❌ Causa TS-991010
 
             2. FORMATO DE imports: [] EN COMPONENTES STANDALONE:
-            - DEBE ser un array válido de TypeScript:
-                imports: [CommonModule, MatCardModule, LibHelloComponent]  // ← Sin comillas, sin strings
-            - NO usar: imports: ["MatCardModule"]  // ❌ Esto causa TS-991010
+            - DEBE ser un array de identificadores de clase:
+                imports: [CommonModule, MatCardModule, LibHelloComponent]
+            - NO usar comillas ni strings: imports: ["MatCardModule"] ❌
 
-            3. app.config.ts (OPCIONAL - RECOMENDADO OMITIR PARA APPS SIMPLES):
-            - Si la app es minimalista, OMITE app.config.ts completamente
-            - O si lo generas, debe exportar algo válido:
-                export const appConfig: ApplicationConfig = {{ ... }};
-                // O mínimo: export {{}};  // ← Para evitar TS2305
+            3. ESTILOS GLOBALES (styles.scss):
+            - Si @muface-lib no está disponible, usar fallback:
+                @use '@angular/material' as mat;
+                // @use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme; // ← Opcional, comentar si no disponible
+                
+                @include mat.core();
+                :root {{
+                @include mat.all-component-themes(mat.define-light-theme({{
+                    color: (primary: mat.define-palette(mat.$indigo-palette)),
+                }}));
+                }}
 
-            4. CONSISTENCIA CLASE/TEMPLATE:
+            4. ARCHIVOS .scss POR COMPONENTE:
+            - Si generas un componente lib-*, DEBES generar también su .scss
+            - Ejemplo: lib-hello.component.ts → lib-hello.component.scss
+
+            5. CONSISTENCIA CLASE/TEMPLATE:
             - Si el template usa <lib-hello>, la clase DEBE importar LibHelloComponent
-            - Si usa [(ngModel)], importar FormsModule
-            - Si usa formControlName, importar ReactiveFormsModule
-
-            5. PATRÓN ATOM:
-            - Selector: 'lib-*', Clase: 'Lib*Component<T>', standalone: true
-            - changeDetection: ChangeDetectionStrategy.OnPush
-            - inject() para DI, signal()/computed() para estado (recomendado)
+            - Si usa mat-card, importar MatCardModule
 
             DESCRIPCIÓN DE LA APP:
             {description}
@@ -196,24 +200,24 @@ class ProjectGenerator:
 
             TU TAREA: Generar código Angular COMPILABLE para aplicación minimalista.
 
-            FORMATO ESTRICTO:
+            FORMATO ESTRICTO (sin saltos extra):
             === FILE: src/app/app.component.ts ===
             ```typescript
             import {{ Component }} from '@angular/core';
             import {{ CommonModule }} from '@angular/common';
-            import {{ MatCardModule }} from '@angular/material/card';  // ← Import explícito
+            import {{ MatCardModule }} from '@angular/material/card';
             import {{ LibHelloComponent }} from './lib-hello/lib-hello.component';
 
             @Component({{
             selector: 'app-root',
             standalone: true,
-            imports: [CommonModule, MatCardModule, LibHelloComponent],  // ← Array válido, sin strings
+            imports: [CommonModule, MatCardModule, LibHelloComponent],
             template: `<lib-hello></lib-hello>`
             }})
             export class AppComponent {{}}
-
+            
             === FILE: src/app/lib-hello/lib-hello.component.ts ===
-
+            typescript
             import {{ Component, ChangeDetectionStrategy }} from '@angular/core';
             import {{ CommonModule }} from '@angular/common';
             import {{ MatCardModule }} from '@angular/material/card';
@@ -231,17 +235,28 @@ class ProjectGenerator:
             }})
             export class LibHelloComponent {{}}
 
+            === FILE: src/app/lib-hello/lib-hello.component.scss ===
+            scss
+            :host {{
+                display: block;
+                padding: 1rem;
+                }}
+                mat-card {{
+                width: 100%;
+                }}
+            
             === FILE: src/styles.scss ===
-
+            scss
             @use '@angular/material' as mat;
-            @use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme;
-
+            // Fallback si @muface-lib no está disponible
             @include mat.core();
-
             :root {{
-            @include mat.all-component-themes(muf-theme.$light-theme);
+            @include mat.all-component-themes(mat.define-light-theme({{
+                color: (primary: mat.define-palette(mat.$indigo-palette)),
+            }}));
             }}
             RESPONDE SOLO CON ARCHIVOS EN FORMATO === FILE: ... ===, SIN EXPLICACIONES."""
+            
 
             # ✅ CORRECTO: Usar asyncio.wait_for para manejar el timeout
             response = await asyncio.wait_for(
@@ -251,6 +266,7 @@ class ProjectGenerator:
     
             # Parsear respuesta y escribir archivos
             files_written = await self._parse_and_write_files(app_path, response)
+            self._auto_fix_common_issues(app_path)  # ← Añadir esta línea
             validation_errors = self._validate_generated_code(app_path)
             if validation_errors:
                 logger.warning(f"⚠️ Advertencias de validación: {validation_errors}")
@@ -358,10 +374,18 @@ class ProjectGenerator:
                 return False
             
             # 🛠️ Verificar que package.json fue creado
+            # Después de verificar que package.json existe:
             package_json = app_path / "package.json"
-            if not package_json.exists():
-                logger.error(f"❌ ng new completó pero package.json no existe en {app_path}")
-                return False
+            if package_json.exists():
+                import json
+                pkg = json.loads(package_json.read_text(encoding='utf-8'))
+                
+                # Añadir Angular Material si no está
+                if '@angular/material' not in pkg.get('dependencies', {}):
+                    pkg.setdefault('dependencies', {})['@angular/material'] = '^19.0.0'
+                    pkg.setdefault('dependencies', {})['@angular/cdk'] = '^19.0.0'
+                    package_json.write_text(json.dumps(pkg, indent=2), encoding='utf-8')
+                    logger.info("✅ Añadido @angular/material a package.json")
             
             # 🛠️ Crear .npmrc con configuración ATOM/Nexus ANTES de npm install manual
             npmrc_path = app_path / ".npmrc"
@@ -821,3 +845,82 @@ class ProjectGenerator:
             logger.info(f"ℹ️ {len(warnings)} advertencias de validación ATOM")
         
         return errors + warnings  # Devolver ambos para que el caller decida
+
+
+    def _auto_fix_common_issues(self, app_path: Path) -> int:
+        """Corrige automáticamente errores comunes en código generado por IA"""
+        import re
+        fixes = 0
+        
+        # 1. Corregir imports: [] con strings → referencias de clase
+        for ts_file in (app_path / "src" / "app").rglob("*.component.ts"):
+            content = ts_file.read_text(encoding='utf-8')
+            
+            # Corregir imports: ["Something"] → imports: [Something]
+            if re.search(r'imports:\s*\[\s*["\']', content):
+                content = re.sub(
+                    r'imports:\s*\[\s*["\']([^"\']+)["\']\s*\]',
+                    r'imports: [\1]',
+                    content
+                )
+                ts_file.write_text(content, encoding='utf-8')
+                fixes += 1
+                logger.info(f"✅ Auto-fix: {ts_file.name} - imports corregidos")
+            
+            # Asegurar que MatCardModule está importado si se usa mat-card
+            if '<mat-card' in content and 'MatCardModule' not in content:
+                # Añadir import
+                if 'import {' in content:
+                    content = content.replace(
+                        'from \'@angular/core\';',
+                        'from \'@angular/core\';\nimport { MatCardModule } from \'@angular/material/card\';'
+                    )
+                    # Añadir a imports: []
+                    if 'imports: [' in content:
+                        content = content.replace(
+                            'imports: [',
+                            'imports: [MatCardModule, '
+                        )
+                    ts_file.write_text(content, encoding='utf-8')
+                    fixes += 1
+                    logger.info(f"✅ Auto-fix: {ts_file.name} - MatCardModule añadido")
+        
+        # 2. Crear .scss faltante para componentes lib-*
+        for ts_file in (app_path / "src" / "app").rglob("lib-*.component.ts"):
+            scss_file = ts_file.with_suffix('.scss')
+            if not scss_file.exists():
+                scss_content = """:host {
+                display: block;
+                padding: var(--spacing-md, 1rem);
+                }
+                """
+                scss_file.write_text(scss_content, encoding='utf-8')
+                fixes += 1
+                logger.info(f"✅ Auto-fix: Creado {scss_file.name}")
+        
+        # 3. Corregir styles.scss si usa @muface-lib no disponible
+        styles_file = app_path / "src" / "styles.scss"
+        if styles_file.exists():
+            content = styles_file.read_text(encoding='utf-8')
+            if "@muface-lib" in content and "@use '@angular/material'" in content:
+                # Comentar línea de muface y usar fallback
+                content = content.replace(
+                    "@use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme;",
+                    "// @use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme; // ← Comentado si no disponible"
+                )
+                # Añadir fallback theme si no existe
+                if "mat.define-light-theme" not in content:
+                    fallback = """
+                    // Fallback theme si muf-theme no está disponible
+                    :root {
+                    @include mat.all-component-themes(mat.define-light-theme((
+                        color: (primary: mat.define-palette(mat.$indigo-palette)),
+                    )));
+                    }
+                    """
+                    content += fallback
+                styles_file.write_text(content, encoding='utf-8')
+                fixes += 1
+                logger.info("✅ Auto-fix: styles.scss - fallback theme añadido")
+        
+        return fixes
