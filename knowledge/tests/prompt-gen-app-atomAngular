@@ -104,3 +104,11 @@ npm install @angular/material@^19.0.0 @angular/cdk@^19.0.0 --legacy-peer-deps
 
 
 
+Esto pasa porque `fallback_theme` se define dentro de un `if`, pero se usa fuera de ese bloque.
+
+---
+
+## ✅ Solución #1: Regex que soporta CON y SIN bloques markdown
+
+**Reemplaza `_parse_and_write_files` con esta versión más flexible:**
+

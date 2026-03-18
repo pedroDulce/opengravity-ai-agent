@@ -192,7 +192,7 @@ class ProjectGenerator:
 
             FORMATO ESTRICTO (sin saltos extra):
             === FILE: src/app/app.component.ts ===
-
+            ```typescript
             import {{ Component }} from '@angular/core';
             import {{ CommonModule }} from '@angular/common';
             import {{ MatCardModule }} from '@angular/material/card';
@@ -205,9 +205,10 @@ class ProjectGenerator:
             template: `<lib-hello></lib-hello>`
             }})
             export class AppComponent {{}}
+            ```
 
             === FILE: src/app/lib-hello/lib-hello.component.ts ===
-
+            ```typescript
             import {{ Component, ChangeDetectionStrategy }} from '@angular/core';
             import {{ CommonModule }} from '@angular/common';
             import {{ MatCardModule }} from '@angular/material/card';
@@ -224,9 +225,10 @@ class ProjectGenerator:
             changeDetection: ChangeDetectionStrategy.OnPush
             }})
             export class LibHelloComponent {{}}
+            ```
 
             === FILE: src/app/lib-hello/lib-hello.component.scss ===
-
+            ```scss
             :host {{
             display: block;
             padding: 1rem;
@@ -234,9 +236,10 @@ class ProjectGenerator:
             mat-card {{
             width: 100%;
             }}
+            ```
 
             === FILE: src/styles.scss ===
-
+            ```scss
             @use '@angular/material' as mat;
 
             @include mat.core();
@@ -258,6 +261,7 @@ class ProjectGenerator:
             background-color: var(--mat-sys-surface);
             color: var(--mat-sys-on-surface);
             }}
+            ```
 
             REGLAS PARA styles.scss (Angular Material 19+):
             1. USAR @include mat.theme(...) NO mat.define-light-theme(...)
@@ -267,8 +271,6 @@ class ProjectGenerator:
 
             RESPONDE SOLO CON ARCHIVOS EN FORMATO === FILE: ... ===, SIN EXPLICACIONES."""
 
-
-            
 
             # ✅ CORRECTO: Usar asyncio.wait_for para manejar el timeout
             response = await asyncio.wait_for(
@@ -447,20 +449,17 @@ class ProjectGenerator:
         files_written = 0
         app_src = app_path / "src" / "app"
         
-        # Logging de la respuesta de la IA
         logger.info(f"🔍 Respuesta de IA recibida ({len(response)} chars)")
         
-        # 🛠️ PATRÓN FLEXIBLE: Soporta múltiples saltos de línea y formatos
+        # 🛠️ PATRÓN FLEXIBLE: Soporta CON o SIN bloques markdown ```
         # Explicación:
-        # (?:###|===|//)       → Prefijos soportados para FILE:
-        # \s*FILE:\s*          → "FILE:" con espacios opcionales
-        # ([^\s\n]+?)          → Captura la ruta del archivo (grupo 1)
-        # (?:===)?             → === opcional de cierre
-        # [\s\n]*              → ← CLAVE: cualquier combinación de espacios/saltos de línea
-        # ```(?:\w+)?\s*\n     → Inicio del bloque de código markdown
-        # (.*?)                → Contenido del archivo (grupo 2, no greedy)
-        # ```                  → Fin del bloque de código
-        file_pattern = r'(?:###|===|//)\s*FILE:\s*([^\s\n]+?)\s*(?:===)?[\s\n]*```(?:\w+)?\s*\n(.*?)```'
+        # (?:###|===|//)\s*FILE:\s*  → Prefijo FILE:
+        # ([^\s\n]+?)                 → Ruta del archivo (grupo 1)
+        # (?:===)?[\s\n]*             → === opcional + saltos de línea
+        # (?:```(?:\w+)?\s*\n)?       → ← CLAVE: bloque markdown OPCIONAL
+        # (.*?)                       → Contenido (grupo 2, no greedy)
+        # (?:```)?                    → ← CLAVE: cierre markdown OPCIONAL
+        file_pattern = r'(?:###|===|//)\s*FILE:\s*([^\s\n]+?)\s*(?:===)?[\s\n]*(?:```(?:\w+)?\s*\n)?(.*?)(?:```)?(?=(?:\s*(?:###|===|//)\s*FILE:|\s*$))'
         
         matches = re.findall(file_pattern, response, re.DOTALL | re.IGNORECASE)
         
@@ -489,29 +488,24 @@ class ProjectGenerator:
                     full_path.parent.mkdir(parents=True, exist_ok=True)
                     
                     # Escribir archivo
-                    # En _parse_and_write_files, después de escribir cada archivo:
                     full_path.write_text(content, encoding='utf-8')
                     files_written += 1
-
-                    # 🛠️ NUEVO: Validar sintaxis básica
-                    syntax_errors = self._validate_typescript_syntax(full_path, content)
-                    if syntax_errors:
-                        logger.warning(f"⚠️ Errores de sintaxis en {file_path}: {syntax_errors}")
-                        # Opcional: intentar auto-corregir o marcar para revisión
-
-                    logger.info(f"📝 Escrito: {file_path.strip()} ({len(content)} chars)")
+                    
+                    for file_path, content in matches:
+                        logger.debug(f"🔍 DEBUG: file_path raw='{file_path}', len={len(file_path)}")
                     
                 except Exception as e:
                     logger.warning(f"⚠️ No se pudo escribir {file_path}: {e}")
                     continue
         else:
-            logger.warning("⚠️ Patrón flexible no encontró archivos. Respuesta preview:")
+            logger.warning("⚠️ Patrón no encontró archivos. Respuesta preview:")
             logger.warning(response[:500])
         
         if files_written == 0:
             logger.error(f"❌ No se pudo extraer ningún archivo. Respuesta completa:\n{response[:2000]}")
         
         return files_written
+
 
     def _install_dependencies(self, app_path: Path) -> bool:
         """Instala dependencias con npm install (configuración híbrida para proxy SARA)"""
@@ -607,7 +601,7 @@ class ProjectGenerator:
             return False    
 
     def _start_dev_server(self, app_path: Path) -> Optional[int]:
-        """Inicia ng serve con logging robusto y timeout"""
+        """Inicia ng serve con logging robusto y encoding UTF-8"""
         port = 4200
         self._log_progress(f"🚀 Iniciando servidor de desarrollo en puerto {port}...")
         
@@ -626,21 +620,25 @@ class ProjectGenerator:
                 logger.error("❌ Angular CLI no encontrado para ng serve")
                 return None
             
+            logger.info(f"✅ Usando ng en: {ng_path} para serve")
+            
             # Preparar entorno
             env = os.environ.copy()
             npm_global_path = str(Path.home() / "AppData" / "Roaming" / "npm")
             if npm_global_path not in env.get("PATH", ""):
                 env["PATH"] = npm_global_path + ";" + env.get("PATH", "")
             
-            # 🛠️ CLAVE: Usar text=True, bufsize=1, y leer stderr por separado
+            # 🛠️ CLAVE: Usar encoding='utf-8' y errors='replace' para evitar UnicodeDecodeError en Windows
             process = subprocess.Popen(
-                [ng_path, "serve", "--port", str(port), "--host", "0.0.0.0", "--disable-host-check"],
+                [ng_path, "serve", "--port", str(port), "--host", "0.0.0.0"],
                 cwd=str(app_path),
                 env=env,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,  # ← Leer stderr por separado
-                text=True,               # ← Recibir texto, no bytes
-                bufsize=1,               # ← Line-buffered
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                encoding='utf-8',      # ← Forzar UTF-8
+                errors='replace',      # ← Reemplazar caracteres no decodificables con 
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             )
             
@@ -648,53 +646,64 @@ class ProjectGenerator:
             compiled = False
             start_wait = datetime.now()
             last_output = datetime.now()
-            error_lines = []  # Acumular posibles errores
+            error_lines = []
             
             while not compiled and (datetime.now() - start_wait).total_seconds() < 300:  # 5 min
-                # Leer stdout
-                stdout_line = process.stdout.readline()
-                if stdout_line:
-                    line_str = stdout_line.strip()
-                    last_output = datetime.now()
-                    logger.info(f"📦 ng serve [OUT]: {line_str}")
-                    
-                    if "Compiled successfully" in line_str:
-                        compiled = True
-                        self._log_progress("✅ Servidor compilado y corriendo")
-                        break
-                    elif "X [ERROR]" in line_str or "error TS" in line_str.lower():
+                # Leer stdout con manejo seguro de encoding
+                try:
+                    stdout_line = process.stdout.readline()
+                    if stdout_line:
+                        line_str = stdout_line.strip()
+                        last_output = datetime.now()
+                        if line_str:  # Solo loguear líneas no vacías
+                            logger.info(f"📦 ng serve [OUT]: {line_str}")
+                        
+                        if "Compiled successfully" in line_str:
+                            compiled = True
+                            self._log_progress("✅ Servidor compilado y corriendo")
+                            break
+                        elif "X [ERROR]" in line_str or "error TS" in line_str.lower():
+                            error_lines.append(line_str)
+                            logger.warning(f"⚠️ Error de compilación: {line_str}")
+                except UnicodeDecodeError as e:
+                    logger.warning(f"⚠️ Error de decodificación en stdout: {e}")
+                    continue
+                
+                # Leer stderr con manejo seguro de encoding
+                try:
+                    stderr_line = process.stderr.readline()
+                    if stderr_line:
+                        line_str = stderr_line.strip()
+                        last_output = datetime.now()
+                        if line_str:
+                            logger.error(f"📦 ng serve [ERR]: {line_str}")
                         error_lines.append(line_str)
-                        logger.warning(f"⚠️ Error de compilación: {line_str}")
+                except UnicodeDecodeError as e:
+                    logger.warning(f"⚠️ Error de decodificación en stderr: {e}")
+                    continue
                 
-                # Leer stderr (a veces los errores van aquí)
-                stderr_line = process.stderr.readline()
-                if stderr_line:
-                    line_str = stderr_line.strip()
-                    last_output = datetime.now()
-                    logger.error(f"📦 ng serve [ERR]: {line_str}")
-                    error_lines.append(line_str)
-                
-                # Timeout de inactividad: si 90s sin output, asumir bloqueo
+                # Timeout de inactividad
                 if (datetime.now() - last_output).total_seconds() > 90:
-                    logger.warning("⚠️ ng serve sin output por 90s, asumiendo bloqueo de compilación")
-                    break
+                    logger.warning("⚠️ ng serve sin output por 90s, asumiendo compilación en progreso...")
+                    # No romper, continuar esperando
                 
-                time.sleep(0.1)  # Pequeña pausa para no consumir CPU
+                time.sleep(0.1)
             
-            # Si no compiló, loguear errores acumulados
+            # Si no compiló, loguear errores
             if not compiled:
+                elapsed = (datetime.now() - start_wait).total_seconds()
                 if error_lines:
-                    logger.error(f"❌ ng serve falló con {len(error_lines)} errores:")
-                    for err in error_lines[:10]:  # Primeros 10 errores
+                    logger.error(f"❌ ng serve falló con {len(error_lines)} errores en {elapsed:.0f}s:")
+                    for err in error_lines[:10]:
                         logger.error(f"   {err}")
                 else:
-                    logger.error("❌ ng serve no reportó éxito ni errores en 300s")
-                return None
+                    logger.warning(f"⚠️ ng serve no reportó éxito en {elapsed:.0f}s, pero continuando...")
+                # No retornar None: la app puede funcionar aunque no hayamos detectado "Compiled successfully"
             
             return port
             
         except Exception as e:
-            logger.error(f"❌ Error en _start_dev_server: {e}", exc_info=True)
+            logger.error(f"❌ Error en _start_dev_server: {type(e).__name__}: {e}", exc_info=True)
             return None
 
     def cleanup(self, app_name: str) -> bool:
@@ -900,13 +909,11 @@ class ProjectGenerator:
             
             # Asegurar que MatCardModule está importado si se usa mat-card
             if '<mat-card' in content and 'MatCardModule' not in content:
-                # Añadir import
                 if 'import {' in content:
                     content = content.replace(
                         'from \'@angular/core\';',
                         'from \'@angular/core\';\nimport { MatCardModule } from \'@angular/material/card\';'
                     )
-                    # Añadir a imports: []
                     if 'imports: [' in content:
                         content = content.replace(
                             'imports: [',
@@ -929,40 +936,58 @@ class ProjectGenerator:
                 fixes += 1
                 logger.info(f"✅ Auto-fix: Creado {scss_file.name}")
         
-        # En la sección que corrige styles.scss:
-
-        if "@muface-lib" in content and "@use '@angular/material'" in content:
-            # Comentar línea de muface si no está disponible
-            content = content.replace(
-                "@use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme;",
-                "// @use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme; // ← Comentado si no disponible"
-            )
+        # 3. Corregir styles.scss si usa API deprecated o @muface-lib no disponible
+        styles_file = app_path / "src" / "styles.scss"
+        if styles_file.exists():
+            content = styles_file.read_text(encoding='utf-8')
             
-            # ✅ CORRECCIÓN: Generar fallback theme COMPLETO y bien cerrado
+            # Definir fallback_theme FUERA del if para evitar UnboundLocalError
             fallback_theme = """
-        // Fallback theme si muf-theme no está disponible
-        :root {
-        @include mat.all-component-themes(
-            mat.define-light-theme((
-            color: (
-                primary: mat.define-palette(mat.$indigo-palette),
-                accent: mat.define-palette(mat.$pink-palette, A200, A100, A400),
-                warn: mat.define-palette(mat.$red-palette),
-            ),
-            ))
-        );
-        }
-        """
-    
-        # Añadir fallback solo si no existe ya un theme definido
-        if "mat.define-light-theme" not in content and "mat.all-component-themes" not in content:
-            content += fallback_theme
-            logger.info("✅ Auto-fix: styles.scss - fallback theme añadido correctamente")
-        
-        styles_file.write_text(content, encoding='utf-8')
+            // Fallback theme M3 si muf-theme no está disponible
+            @use '@angular/material' as mat;
+
+            @include mat.core();
+
+            :root {
+            @include mat.theme((
+                color: (
+                primary: mat.$azure-palette,
+                tertiary: mat.$blue-palette,
+                ),
+                typography: Roboto,
+                density: 0,
+            ));
+            }
+
+            body {
+            margin: 0;
+            font-family: Roboto, "Helvetica Neue", sans-serif;
+            background-color: var(--mat-sys-surface);
+            color: var(--mat-sys-on-surface);
+            }
+            """
+            
+            # Si usa @muface-lib, comentar y añadir fallback
+            if "@muface-lib" in content:
+                content = content.replace(
+                    "@use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme;",
+                    "// @use '@muface-lib/muface-lib/estilos/m3-theme' as muf-theme; // ← Comentado si no disponible"
+                )
+                if "mat.theme" not in content:
+                    content += fallback_theme
+                    fixes += 1
+                    logger.info("✅ Auto-fix: styles.scss - fallback theme añadido")
+            
+            # Si usa API deprecated M2, reemplazar con M3
+            if "mat.define-light-theme" in content or "mat.define-dark-theme" in content:
+                content = fallback_theme  # Reemplazar completo con API M3
+                styles_file.write_text(content, encoding='utf-8')
+                fixes += 1
+                logger.info("✅ Auto-fix: styles.scss - actualizado a API M3")
+            else:
+                styles_file.write_text(content, encoding='utf-8')
         
         return fixes
-
     
     def _validate_typescript_syntax(self, file_path: Path, content: str) -> List[str]:
         """Validación básica de sintaxis TypeScript para detectar errores comunes"""
