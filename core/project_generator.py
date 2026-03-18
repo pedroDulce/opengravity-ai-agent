@@ -116,6 +116,10 @@ class ProjectGenerator:
                 result["errors"].append("Error instalando dependencias")
                 return result
 
+            # 🔍 NUEVO: Validación rápida de sintaxis antes de ng serve
+            if not self._quick_compile_check(app_path):
+                logger.warning("⚠️ Errores de sintaxis detectados, pero continuando con ng serve para debugging")
+
             # Paso 4: Iniciar servidor de desarrollo
             port = self._start_dev_server(app_path)
             if not port:
@@ -477,9 +481,16 @@ class ProjectGenerator:
                     full_path.parent.mkdir(parents=True, exist_ok=True)
                     
                     # Escribir archivo
+                    # En _parse_and_write_files, después de escribir cada archivo:
                     full_path.write_text(content, encoding='utf-8')
                     files_written += 1
-                    
+
+                    # 🛠️ NUEVO: Validar sintaxis básica
+                    syntax_errors = self._validate_typescript_syntax(full_path, content)
+                    if syntax_errors:
+                        logger.warning(f"⚠️ Errores de sintaxis en {file_path}: {syntax_errors}")
+                        # Opcional: intentar auto-corregir o marcar para revisión
+
                     logger.info(f"📝 Escrito: {file_path.strip()} ({len(content)} chars)")
                     
                 except Exception as e:
@@ -650,6 +661,15 @@ class ProjectGenerator:
                     compiled = True
                     self._log_progress("✅ Servidor compilado y corriendo")
                     break
+                elif "expected" in line_str and ")" in line_str:
+                    # Intentar identificar qué archivo tiene el error
+                    error_match = re.search(r'\[plugin angular-compiler\].*?File \'([^\']+)\'', line_str)
+                    if error_match:
+                        error_file = Path(error_match.group(1))
+                        if error_file.exists():
+                            content = error_file.read_text(encoding='utf-8')
+                            logger.error(f"🔍 DEBUG - Contenido de {error_file.name}:")
+                            logger.error(f"   {content[:2000]}...")  # Primeros 2000 chars
                 elif "error" in line_str.lower() and "Compiled" not in line_str:
                     logger.warning(f"⚠️ ng serve: {line_str}")
             
@@ -924,3 +944,93 @@ class ProjectGenerator:
                 logger.info("✅ Auto-fix: styles.scss - fallback theme añadido")
         
         return fixes
+
+    
+    def _validate_typescript_syntax(self, file_path: Path, content: str) -> List[str]:
+        """Validación básica de sintaxis TypeScript para detectar errores comunes"""
+        errors = []
+        
+        # 1. Verificar balance de paréntesis en decorators @Component
+        if '@Component' in content:
+            # Contar paréntesis después de @Component
+            comp_start = content.find('@Component')
+            comp_block = content[comp_start:comp_start+500]  # Primeros 500 chars después
+            
+            open_parens = comp_block.count('(')
+            close_parens = comp_block.count(')')
+            if open_parens != close_parens:
+                errors.append(f"{file_path.name}: Paréntesis desbalanceados en @Component")
+        
+        # 2. Verificar que los templates inline están cerrados con backticks
+        template_matches = re.findall(r'template:\s*`([^`]*)', content)
+        for match in template_matches:
+            # Si el template no termina con `, es probable que esté truncado
+            if not match.rstrip().endswith('`'):
+                # Verificar si hay un ` más adelante en el contenido
+                full_template = re.search(r'template:\s*`.*?`', content, re.DOTALL)
+                if not full_template:
+                    errors.append(f"{file_path.name}: Template inline no cerrado con backticks")
+        
+        # 3. Verificar que los imports tienen sintaxis básica correcta
+        import_lines = re.findall(r'^import\s+.*?;?\s*$', content, re.MULTILINE)
+        for imp in import_lines:
+            if 'from' in imp and ("'" not in imp or '"' not in imp):
+                # Import sin comillas en la ruta
+                if not re.search(r"from\s+['\"].+?['\"]", imp):
+                    errors.append(f"{file_path.name}: Import con sintaxis inválida: {imp[:50]}")
+        
+        # 4. Verificar balance de llaves en clases/componentes
+        if 'export class' in content:
+            open_braces = content.count('{')
+            close_braces = content.count('}')
+            if open_braces != close_braces:
+                errors.append(f"{file_path.name}: Llaves desbalanceadas en clase")
+        
+        return errors
+
+    
+    def _quick_compile_check(self, app_path: Path) -> bool:
+        """Ejecuta tsc --noEmit para verificar sintaxis sin generar output"""
+        try:
+            import subprocess
+            import shutil
+            
+            # Encontrar tsc
+            tsc_path = shutil.which("tsc")
+            if not tsc_path:
+                # Intentar en node_modules/.bin
+                tsc_local = app_path / "node_modules" / ".bin" / "tsc.cmd"
+                if tsc_local.exists():
+                    tsc_path = str(tsc_local)
+            
+            if not tsc_path:
+                logger.warning("⚠️ tsc no encontrado, saltando compilación rápida")
+                return True  # No fallar si no hay tsc
+            
+            # Ejecutar tsc --noEmit (solo verifica, no genera JS)
+            process = subprocess.run(
+                [tsc_path, "--noEmit", "--skipLibCheck"],
+                cwd=str(app_path),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=60,  # 1 minuto máximo
+                text=True
+            )
+            
+            if process.returncode != 0:
+                # Loguear primeros errores para debugging
+                stderr_lines = process.stderr.strip().split('\n')[:10]
+                logger.warning(f"⚠️ tsc --noEmit encontró errores:")
+                for line in stderr_lines:
+                    logger.warning(f"   {line}")
+                return False
+            
+            logger.info("✅ tsc --noEmit: sintaxis válida")
+            return True
+            
+        except subprocess.TimeoutExpired:
+            logger.warning("⏰ Timeout en tsc --noEmit, continuando...")
+            return True  # No fallar por timeout
+        except Exception as e:
+            logger.warning(f"⚠️ Error en compilación rápida: {e}")
+            return True  # No fallar si hay error ejecutando tsc

@@ -1,5 +1,5 @@
 Usos del agente:
-/ai ¿Qué es un DTO en Angular?
+/ai Qué es un DTO en Angular
 /dev crear servicio HTTP tipado para pets
 /explain [pega código]
 /debug KeyError: 'user_id'
