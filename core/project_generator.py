@@ -657,10 +657,10 @@ class ProjectGenerator:
                         last_output = datetime.now()
                         if line_str:  # Solo loguear líneas no vacías
                             logger.info(f"📦 ng serve [OUT]: {line_str}")
-                        
-                        if "Compiled successfully" in line_str:
+                        if "Compiled successfully" in line_str or "Application bundle generation complete" in line_str:
                             compiled = True
                             self._log_progress("✅ Servidor compilado y corriendo")
+                            logger.info(f"🌐 App disponible en: http://localhost:{port}")
                             break
                         elif "X [ERROR]" in line_str or "error TS" in line_str.lower():
                             error_lines.append(line_str)
