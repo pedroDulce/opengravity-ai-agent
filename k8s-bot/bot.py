@@ -351,44 +351,205 @@ async def mensaje_normal(update: Update, context: ContextTypes.DEFAULT_TYPE):
         REQUEST_LATENCY.labels("message").observe(time.time() - start_time)
 
 # ============================================================
-# BACKGROUND TASK (con manejo seguro)
+# 🚨 CHEQUEO PERIÓDICO DE ALERTAS (PRODUCCIÓN)
 # ============================================================
 async def chequeo_periodico(app: Application):
+    """
+    Monitorea el namespace 'atom' cada 10 minutos
+    Envía alerta solo si detecta pods NO-Running
+    """
     logger.info("⏰ Tarea de chequeo iniciada (cada 10 min)")
+    
+    # Contador para evitar spam de alertas repetidas
+    ultima_alerta_enviada = None
     
     while True:
         try:
-            await asyncio.sleep(600)  # 10 minutos
-            logger.info("🔄 Ejecutando chequeo periódico...")
+            # Esperar 10 minutos (600 segundos)
+            await asyncio.sleep(600)
             
+            logger.info("🔄 Ejecutando chequeo periódico del clúster...")
+            
+            # Obtener estado real de los pods
             estado = obtener_estado_pods(v1)
+            datos = obtener_datos_cluster(K8S_NAMESPACE)
             
-            if "ALERTA" in estado or "❌" in estado:
-                logger.warning(f"⚠️ Problemas detectados")
-                try:
-                    informe = await asyncio.wait_for(
-                        ia_cb.call(consultar_ia, f"Problemas detectados:\n{estado}"),
-                        timeout=30
-                    )
-                    await app.bot.send_message(
-                        chat_id=CHAT_ID, 
-                        text=f"🚨 **ALERTA**\n\n{informe}",
-                        parse_mode="Markdown",
-                        request_timeout=30  # ⚠️ Timeout en el envío a Telegram
-                    )
-                    logger.info("✅ Alerta enviada")
-                except asyncio.TimeoutError:
-                    logger.error("⏰ Timeout enviando alerta")
-            else:
-                logger.info("✅ Chequeo: todos los pods Running")
+            if not datos:
+                logger.warning("⚠️ No se pudieron obtener datos del clúster")
+                continue
+            
+            pods_df = datos["pods"]
+            
+            # Filtrar pods con problemas
+            pods_problema = pods_df[pods_df["Estado"] != "Running"]
+            
+            if len(pods_problema) > 0:
+                # 🚨 HAY PROBLEMAS - Enviar alerta
+                logger.warning(f"⚠️ {len(pods_problema)} pods con problemas detectados")
                 
+                # Construir lista de pods problemáticos
+                lista_pods = ""
+                for _, pod in pods_problema.iterrows():
+                    lista_pods += f"\n📦 `{pod['Namespace']}/{pod['Nombre']}`"
+                    lista_pods += f"\n   ❌ Estado: **{pod['Estado']}**"
+                    lista_pods += f"\n   🔄 Reinicios: {pod['Reinicios']}"
+                    lista_pods += f"\n   🌐 Node: `{pod['Node']}`\n"
+                
+                # Mensaje de alerta principal
+                alerta = f"""
+🚨 **ALERTA KUBERNETES - {K8S_NAMESPACE}**
+
+⚠️ Se detectaron **{len(pods_problema)} pod(s)** con problemas:
+
+{lista_pods}
+
+🕐 **Detectado:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+📊 **Salud del clúster:** {len(pods_df[pods_df['Estado']=='Running'])}/{len(pods_df)} Running
+
+---
+
+💡 Usa `/reporte` para ver estado completo
+📊 Usa `/dashboard` para dashboard interactivo
+"""
+                
+                # Enviar alerta por Telegram
+                await app.bot.send_message(
+                    chat_id=CHAT_ID,
+                    text=alerta,
+                    parse_mode="Markdown"
+                )
+                logger.info("✅ Alerta enviada por Telegram")
+                
+                # Esperar 10 segundos y enviar análisis de IA
+                await asyncio.sleep(10)
+                
+                # Preparar contexto para IA
+                pods_problematicos_text = "\n".join([
+                    f"- {row['Nombre']} ({row['Estado']}) - Reinicios: {row['Reinicios']}"
+                    for _, row in pods_problema.iterrows()
+                ])
+                
+                contexto_ia = f"""
+Problema detectado en Kubernetes namespace '{K8S_NAMESPACE}':
+
+Pods con problemas:
+{pods_problematicos_text}
+
+Total pods: {len(pods_df)}
+Pods Running: {len(pods_df[pods_df['Estado']=='Running'])}
+Pods con error: {len(pods_problema)}
+
+Genera un informe técnico BREVE con:
+1. Qué significan estos estados (CrashLoopBackOff, Pending, Error, etc.)
+2. Posibles causas más probables
+3. Comandos kubectl específicos para diagnosticar (con namespace '{K8S_NAMESPACE}')
+4. Acciones recomendadas prioritarias
+
+Sé conciso y práctico. Máximo 300 palabras.
+"""
+                
+                try:
+                    informe_ia = await consultar_ia(contexto_ia)
+                    
+                    await app.bot.send_message(
+                        chat_id=CHAT_ID,
+                        text=f"🔍 **ANÁLISIS IA:**\n\n{informe_ia}",
+                        parse_mode="Markdown"
+                    )
+                    logger.info("✅ Informe IA enviado")
+                    
+                except Exception as ia_error:
+                    logger.error(f"⚠️ Error obteniendo análisis IA: {ia_error}")
+                    # Continuar aunque la IA falle
+                
+            else:
+                # ✅ TODO OK - No enviar nada (no spamear)
+                logger.info("✅ Chequeo completado: todos los pods Running")
+            
         except asyncio.CancelledError:
             logger.info("🛑 Tarea de chequeo cancelada")
             break
         except Exception as e:
-            logger.error(f"❌ Error en chequeo: {str(e)}", exc_info=True)
-            ERROR_COUNT.labels("background").inc()
+            logger.error(f"❌ Error en chequeo periódico: {str(e)}", exc_info=True)
             await asyncio.sleep(60)  # Esperar antes de reintentar
+
+# ============================================================
+# 🧪 ALERTA DE PRUEBA (TEMPORAL - Para testing)
+# ============================================================
+async def alerta_prueba_xxs(app: Application):
+    """
+    ⚠️ FUNCIÓN TEMPORAL PARA TESTING
+    Simula un fallo de pod después de xx segundos
+    """
+    logger.info("⏰ [TEST] Esperando xx segundos para alerta de prueba...")
+    
+    await asyncio.sleep(20)  # Esperar 20 segundos
+    
+    logger.info("🧪 [TEST] Generando alerta de prueba...")
+    
+    # Simular un pod caído
+    pod_falso = {
+        "namespace": "atom",
+        "nombre": "mi-app-backend-deployment-abc123-xyz",
+        "estado": "CrashLoopBackOff",
+        "mensaje": "Back-off restarting failed container"
+    }
+    
+    # Crear mensaje de alerta simulado
+    alerta_simulada = f"""
+🚨 **ALERTA DE PRUEBA - POD CAÍDO**
+
+⚠️ Se ha detectado un problema en el clúster:
+
+📦 **Pod:** `{pod_falso['namespace']}/{pod_falso['nombre']}`
+❌ **Estado:** {pod_falso['estado']}
+📝 **Mensaje:** {pod_falso['mensaje']}
+
+🕐 **Detectado:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+---
+
+⚙️ *Esta es una alerta de prueba para verificar el sistema de notificaciones.*
+🔧 *El pod '{pod_falso['nombre']}' NO existe realmente.*
+"""
+    
+    try:
+        # Enviar alerta por Telegram
+        await app.bot.send_message(
+            chat_id=CHAT_ID,
+            text=alerta_simulada,
+            parse_mode="Markdown"
+        )
+        logger.info("✅ [TEST] Alerta de prueba enviada correctamente")
+        
+        # Esperar 5 segundos y enviar segunda alerta con IA
+        await asyncio.sleep(5)
+        
+        # Usar IA para formatear un informe más detallado
+        contexto_ia = f"""
+Problema detectado en Kubernetes:
+- Pod: {pod_falso['nombre']}
+- Namespace: {pod_falso['namespace']}
+- Estado: {pod_falso['estado']}
+- Error: {pod_falso['mensaje']}
+
+Genera un informe técnico breve con:
+1. Qué significa este error
+2. Posibles causas
+3. Acciones recomendadas
+"""
+        
+        informe_ia = await consultar_ia(contexto_ia)
+        
+        await app.bot.send_message(
+            chat_id=CHAT_ID,
+            text=f"🔍 **ANÁLISIS IA DEL PROBLEMA:**\n\n{informe_ia}",
+            parse_mode="Markdown"
+        )
+        logger.info("✅ [TEST] Informe IA enviado")
+        
+    except Exception as e:
+        logger.error(f"❌ [TEST] Error enviando alerta: {e}")
 
 # ============================================================
 # MANEJO DE SEÑALES (Ctrl+C en Windows)
@@ -468,10 +629,10 @@ async def cmd_foto_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 async def cmd_resumen(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Envía un resumen visual del estado del clúster"""
+    """Envía un resumen visual del estado del clúster de Tanzu Integración"""
     logger.info(f"📩 /resumen de user_id={update.effective_user.id}")
 
-    mensaje = await update.message.reply_text("⏳ **Generando reporte del clúster...**\n\n📊 Un momento por favor.")
+    mensaje = await update.message.reply_text("⏳ **Generando resumen del clúster Tanzu Integración...**\n\n📊 Un momento por favor.")
     
     try:
         
@@ -625,6 +786,8 @@ async def cmd_grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"❌ Error en /grafico: {str(e)}")
         await mensaje.edit_text(f"❌ Error: {str(e)[:100]}")
 
+
+
 async def main_async():
     logger.info("🚀 Starting K8s Bot with IA...")
 
@@ -633,47 +796,49 @@ async def main_async():
         .job_queue(None) \
         .build()
 
+    # ... tus handlers existentes ...
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("pods", consultar_pods))
     app.add_handler(CommandHandler("ia", pregunta_ia))
-    app.add_handler(CommandHandler("dashboard", cmd_dashboard))    
-    app.add_handler(CommandHandler("foto", cmd_foto_dashboard))
+    app.add_handler(CommandHandler("dashboard", cmd_dashboard))
     app.add_handler(CommandHandler("resumen", cmd_resumen))
     app.add_handler(CommandHandler("grafico", cmd_grafico))
+    app.add_handler(CommandHandler("foto", cmd_foto_dashboard))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mensaje_normal))
 
-    # Configurar señales ANTES de iniciar
+    # Configurar señales
     setup_signal_handlers(app)
 
-    # ✅ Inicialización correcta del bot
     await app.initialize()
     await app.start()
-    
-    # ✅ ESTO FALTABA: Iniciar polling para recibir mensajes de Telegram
     await app.updater.start_polling(drop_pending_updates=True)
+    
     logger.info("✅ Polling iniciado. Bot escuchando mensajes...")
     
-    # Iniciar tarea de fondo
+    # Iniciar tarea de chequeo periódico (cada 10 min)
     background_task = asyncio.create_task(chequeo_periodico(app))
+    
+    # 👇 AÑADIR ESTO: Alerta de prueba a los 20 segundos
+    # test_alert_task = asyncio.create_task(alerta_prueba_20s(app))
+    # logger.info("🧪 [TEST] Alerta de prueba programada en 20 segundos")
+    
     logger.info("✅ Bot running. Waiting for messages...")
 
     try:
-        # Esperar indefinidamente, pero permitiendo interrupción
         await asyncio.Event().wait()
     except asyncio.CancelledError:
         logger.info("👋 Main task cancelled")
     finally:
-        # Cleanup ordenado
+        # Cancelar tareas de fondo
         background_task.cancel()
+        # test_alert_task.cancel()  # 👇 Cancelar también la alerta de prueba
         try:
             await background_task
+        #    await test_alert_task
         except asyncio.CancelledError:
             pass
-        # Detener polling y shutdown
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
-        logger.info("✅ Bot shut down cleanly")
+        await graceful_shutdown(app)
+
 
 if __name__ == '__main__':
     try:
