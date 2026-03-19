@@ -22,7 +22,7 @@ plotly==6.6.0
 
 # Gráficos: Exportar Plotly a PNG
 # ⚠️ kaleido 0.2.1 no tiene wheels para Py3.14, usar versión más reciente
-kaleido>=0.3.0
+kaleido>=1.2.0
 
 # Imágenes: Pillow con soporte para Python 3.14
 # ⚠️ 10.4.0 no funciona, usar 11.0.0+

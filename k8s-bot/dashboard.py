@@ -5,10 +5,15 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+
+# Imports de Kubernetes
 from kubernetes import client, config
+from kubernetes.client.rest import ApiException
+
 import os
 from pathlib import Path
 from dotenv import load_dotenv
+
 import time
 
 # ===========================================

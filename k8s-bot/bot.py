@@ -1,27 +1,42 @@
-# bot.py - K8s Bot con IA + Resiliencia mejorada
-# ✅ Timeouts en todas las llamadas de red
-# ✅ Manejo correcto de Ctrl+C en Windows
-# ✅ Background task con timeout y error handling
-
+# ===========================================
+# IMPORTS
+# ===========================================
 import os
-from screenshot_dashboard import tomar_screenshot_dashboard
+import tempfile
 import sys
 import ssl
 import warnings
 import asyncio
 import signal
-from pathlib import Path
-from dotenv import load_dotenv
-from typing import Callable, Any
 import logging
 import time
 from datetime import datetime
+from typing import Callable, Any
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Kubernetes
+from kubernetes import client, config
+from kubernetes.client.rest import ApiException
+
+# Telegram
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+
+# Prometheus
 from prometheus_client import start_http_server, Counter, Histogram
+
+# HTTP y SSL
+import httpx
+import urllib3
+
+# Pandas y Plotly (para /resumen y /grafico)
+import pandas as pd
 import plotly.express as px
-import plotly.io as pio
 from io import BytesIO
+
+# Circuit breaker
+from typing import Callable, Any
 
 # ============================================================
 # ⚠️ CONFIGURACIÓN CRÍTICA: ANTES DE CUALQUIER IMPORT DE RED
@@ -70,6 +85,91 @@ print("🔓 SSL global: verify desactivado")
 print("🔧 Aplicando monkey-patch a httpx.AsyncClient...")
 import httpx
 _original_asyncclient_init = httpx.AsyncClient.__init__
+
+# ============================================================
+# 📊 FUNCIÓN PARA OBTENER DATOS DEL CLÚSTER
+# ============================================================
+
+def obtener_datos_cluster(namespace=None):
+    """
+    Obtiene todos los datos del clúster (pods, deployments, services)
+    Retorna un diccionario con DataFrames de pandas
+    """
+    if not v1:
+        logger.error("❌ No hay conexión a Kubernetes")
+        return None
+    
+    # Si no se especifica namespace, usar el del .env
+    if not namespace:
+        namespace = os.getenv("K8S_NAMESPACE", "atom")
+    
+    try:
+        logger.info(f"🔍 Obteniendo datos del namespace: {namespace}")
+        
+        # ========== PODS ==========
+        pods = v1.list_namespaced_pod(namespace=namespace)
+        pods_data = []
+        
+        for pod in pods.items:
+            containers_ready = 0
+            containers_total = len(pod.status.container_statuses or [])
+            
+            for cs in (pod.status.container_statuses or []):
+                if cs.ready:
+                    containers_ready += 1
+            
+            pods_data.append({
+                "Nombre": pod.metadata.name,
+                "Namespace": pod.metadata.namespace,
+                "Estado": pod.status.phase,
+                "IP": pod.status.pod_ip or "N/A",
+                "Node": pod.spec.node_name or "N/A",
+                "Containers": f"{containers_ready}/{containers_total}",
+                "Reinicios": sum(cs.restart_count for cs in (pod.status.container_statuses or [])),
+                "Edad": str(pod.metadata.creation_timestamp).split("+")[0] if pod.metadata.creation_timestamp else "N/A"
+            })
+        
+        # ========== DEPLOYMENTS ==========
+        try:
+            apps_v1 = client.AppsV1Api()
+            deployments = apps_v1.list_namespaced_deployment(namespace=namespace)
+            deployments_data = []
+            
+            for dep in deployments.items:
+                deployments_data.append({
+                    "Nombre": dep.metadata.name,
+                    "Disponibles": dep.status.available_replicas or 0,
+                    "Listos": dep.status.ready_replicas or 0,
+                    "Deseados": dep.spec.replicas or 0
+                })
+        except Exception as e:
+            logger.warning(f"⚠️ No se pudieron obtener deployments: {e}")
+            deployments_data = []
+        
+        # ========== SERVICES ==========
+        services = v1.list_namespaced_service(namespace=namespace)
+        services_data = []
+        
+        for svc in services.items:
+            services_data.append({
+                "Nombre": svc.metadata.name,
+                "Tipo": svc.spec.type,
+                "Cluster IP": svc.spec.cluster_ip,
+                "Puertos": ", ".join([f"{p.port}/{p.protocol}" for p in svc.spec.ports]) if svc.spec.ports else "N/A"
+            })
+        
+        # Convertir a DataFrames
+        import pandas as pd
+        
+        return {
+            "pods": pd.DataFrame(pods_data),
+            "deployments": pd.DataFrame(deployments_data),
+            "services": pd.DataFrame(services_data)
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error obteniendo datos del clúster: {str(e)}")
+        return None
 
 def _patched_asyncclient_init(self, *args, **kwargs):
     kwargs["verify"] = False
@@ -176,7 +276,7 @@ ia_cb = CircuitBreaker(call_timeout=30)  # ⚠️ Timeout de 30s por llamada a I
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     REQUEST_COUNT.labels("start").inc()
     logger.info(f"📩 /start de user_id={update.effective_user.id}")
-    await update.message.reply_text("🤖 Bot K8s con IA activo. Usa /pods o /ia")
+    await update.message.reply_text("🤖 Bot K8s con IA activo. Usa /ia para consultas generales, o /pods, /dashboard y /resumen para la situación de Tanzu Integración")
 
 async def consultar_pods(update: Update, context: ContextTypes.DEFAULT_TYPE):
     start_time = time.time()
@@ -367,14 +467,18 @@ async def cmd_foto_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await mensaje.edit_text(f"❌ Error tomando screenshot: {str(e)}")
 
 
-async def cmd_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Envía un reporte visual del estado del clúster"""
-    logger.info(f"📩 /reporte de user_id={update.effective_user.id}")
+async def cmd_resumen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Envía un resumen visual del estado del clúster"""
+    logger.info(f"📩 /resumen de user_id={update.effective_user.id}")
+
+    mensaje = await update.message.reply_text("⏳ **Generando reporte del clúster...**\n\n📊 Un momento por favor.")
     
     try:
+        
+        namespace = os.getenv("K8S_NAMESPACE", "atom")
         # Obtener datos
         estado = obtener_estado_pods(v1)
-        datos = obtener_datos_cluster(K8S_NAMESPACE)
+        datos = obtener_datos_cluster(namespace)
         
         if not datos:
             await update.message.reply_text("❌ Error obteniendo datos")
@@ -399,8 +503,8 @@ async def cmd_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pods_df["Edad"] = pd.to_datetime(pods_df["Edad"], errors='coerce')
         pods_ordenados = pods_df.sort_values("Edad", ascending=True)
         
-        reporte = f"""
-📊 **REPORTE KUBERNETES - {K8S_NAMESPACE}**
+        resumen = f"""
+📊 **REPORTE KUBERNETES - {namespace}**
 {'='*40}
 
 📈 **SALUD DEL CLÚSTER**
@@ -419,74 +523,107 @@ async def cmd_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE):
 """
         for i, (_, pod) in enumerate(pods_ordenados.head(5).iterrows(), 1):
             edad_str = str(pod["Edad"]).split(" ")[0] if pd.notna(pod["Edad"]) else "N/A"
-            reporte += f"{i}. `{pod['Nombre']}` - {edad_str}\n"
+            resumen += f"{i}. `{pod['Nombre']}` - {edad_str}\n"
         
-        reporte += f"""
+        resumen += f"""
 
 📁 **Distribución por Node**
 
 """
         for node, count in pods_df["Node"].value_counts().head(3).items():
-            reporte += f"• {node.split('-')[0]}: {count} pods\n"
+            resumen += f"• {node.split('-')[0]}: {count} pods\n"
         
-        reporte += f"""
+        resumen += f"""
 
 🕐 *Actualizado: {datetime.now().strftime('%H:%M:%S')}*
 
 💡 Usa `/dashboard` para ver el dashboard completo
-"""
+"""        
+        await update.message.reply_text(resumen, parse_mode="Markdown")
         
-        await update.message.reply_text(reporte, parse_mode="Markdown")
+        await mensaje.delete()
         
     except Exception as e:
-        logger.error(f"❌ Error en /reporte: {str(e)}")
-        await update.message.reply_text(f"❌ Error generando reporte: {str(e)[:100]}")
+        logger.error(f"❌ Error en /resumen: {str(e)}")
+        await update.message.reply_text(f"❌ Error generando resumen: {str(e)[:100]}")
 
 
 async def cmd_grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Envía un gráfico de estado de pods"""
+    """Envía un gráfico simple del estado de pods"""
     logger.info(f"📩 /grafico de user_id={update.effective_user.id}")
     
     try:
         mensaje = await update.message.reply_text("📊 Generando gráfico...")
-        
-        datos = obtener_datos_cluster(K8S_NAMESPACE)
+        namespace = os.getenv("K8S_NAMESPACE", "atom")
+        datos = obtener_datos_cluster(namespace)
         if not datos:
             await mensaje.edit_text("❌ Error obteniendo datos")
             return
         
         pods_df = datos["pods"]
         
-        # Crear gráfico de pastel
-        estado_counts = pods_df["Estado"].value_counts().reset_index()
-        estado_counts.columns = ["Estado", "Cantidad"]
+        # Contar pods por estado
+        estado_counts = pods_df["Estado"].value_counts()
         
-        fig = px.pie(
-            estado_counts,
-            values="Cantidad",
-            names="Estado",
-            title=f"Pods en namespace '{K8S_NAMESPACE}'",
-            color_discrete_sequence=px.colors.qualitative.Set2,
-            hole=0.4
+        # Crear gráfico de barras simple con Plotly
+        fig = px.bar(
+            x=estado_counts.index.tolist(),
+            y=estado_counts.values.tolist(),
+            title=f"📦 Pods en '{namespace}'",
+            labels={"x": "Estado", "y": "Cantidad"},
+            color=estado_counts.index.tolist(),
+            color_discrete_map={
+                "Running": "#28a745",
+                "Pending": "#ffc107",
+                "Failed": "#dc3545",
+                "Unknown": "#6c757d"
+            },
+            width=600,
+            height=400
         )
         
-        # Convertir a imagen PNG
-        img_bytes = BytesIO()
-        fig.write_image(img_bytes, format="png", width=800, height=600, scale=2)
-        img_bytes.seek(0)
+        # Mejorar el diseño
+        fig.update_layout(
+            showlegend=False,
+            plot_bgcolor="white",
+            paper_bgcolor="white",
+            font=dict(size=14),
+            title_font_size=18
+        )
         
-        # Enviar como foto
+        # En cmd_grafico, reemplaza el bloque try/except de exportación con:
+
+        try:
+            # Método 1: Intentar con to_image (más rápido)
+            img_bytes = fig.to_image(format="png", width=600, height=400, scale=2)
+            
+        except Exception as e:
+            logger.warning(f"⚠️ to_image falló: {e}, intentando write_image...")
+            
+            # Método 2: write_image (más lento pero más estable)            
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                tmp_path = tmp.name
+            
+            try:
+                fig.write_image(tmp_path, width=600, height=400, scale=2)
+                
+                with open(tmp_path, "rb") as f:
+                    img_bytes = f.read()
+                
+            finally:
+                # Limpiar archivo temporal
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+
+        # Enviar la imagen
         await update.message.reply_photo(
-            photo=img_bytes,
-            caption=f"📊 **Estado de Pods - {K8S_NAMESPACE}**\n\nTotal: {len(pods_df)} pods"
+            photo=BytesIO(img_bytes),
+            caption=f"📊 **Estado de Pods**\n\nTotal: {len(pods_df)}\n🟩 Running: {running}"
         )
-        
-        await mensaje.delete()
-        
+
     except Exception as e:
         logger.error(f"❌ Error en /grafico: {str(e)}")
-        await mensaje.edit_text(f"❌ Error generando gráfico: {str(e)[:100]}")
-
+        await mensaje.edit_text(f"❌ Error: {str(e)[:100]}")
 
 async def main_async():
     logger.info("🚀 Starting K8s Bot with IA...")
@@ -501,7 +638,7 @@ async def main_async():
     app.add_handler(CommandHandler("ia", pregunta_ia))
     app.add_handler(CommandHandler("dashboard", cmd_dashboard))    
     app.add_handler(CommandHandler("foto", cmd_foto_dashboard))
-    app.add_handler(CommandHandler("reporte", cmd_reporte))
+    app.add_handler(CommandHandler("resumen", cmd_resumen))
     app.add_handler(CommandHandler("grafico", cmd_grafico))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mensaje_normal))
 
