@@ -61,6 +61,7 @@ else:
 
 # 2️⃣ Configurar proxy
 PROXY_URL = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY") or "http://proxycocs.redsara.es:8080"
+K8S_NAMESPACE = os.getenv("K8S_NAMESPACE", "atom")
 os.environ["HTTP_PROXY"] = PROXY_URL
 os.environ["HTTPS_PROXY"] = PROXY_URL
 os.environ["ALL_PROXY"] = PROXY_URL
@@ -101,7 +102,7 @@ def obtener_datos_cluster(namespace=None):
     
     # Si no se especifica namespace, usar el del .env
     if not namespace:
-        namespace = os.getenv("K8S_NAMESPACE", "atom")
+        namespace = K8S_NAMESPACE
     
     try:
         logger.info(f"🔍 Obteniendo datos del namespace: {namespace}")
@@ -276,18 +277,43 @@ ia_cb = CircuitBreaker(call_timeout=30)  # ⚠️ Timeout de 30s por llamada a I
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     REQUEST_COUNT.labels("start").inc()
     logger.info(f"📩 /start de user_id={update.effective_user.id}")
-    await update.message.reply_text("🤖 Bot K8s con IA activo. Usa /ia para consultas generales, o /pods, /dashboard y /resumen para la situación de Tanzu Integración")
+    msg = (
+    "🤖 *Bot K8s con IA activo*\n\n"
+        "🧠 *Consultas generales*\n"
+        "• `/ia <pregunta>` — Pregunta anything sobre Kubernetes\n\n"
+        "📊 *Monitoreo de Tanzu Kubernetes entorno Integración*\n"
+        "• `/pods` — Estado de todos los pods\n"
+        "• `/resumen` — Informe visual resumido con emojis\n"
+        "• `/dashboard` — Link al dashboard web interactivo\n"        
+        "🔧 *Gestión avanzada*\n"
+        "• `/logs <pod>` — Ver logs de un pod\n"
+        "• `/describe <pod>` — Detalles técnicos completos\n"
+        "• `/restart <pod>` — Reiniciar un pod (con confirmación)\n\n"
+        f"📁 *Namespace:* `{K8S_NAMESPACE}` | 🕐 *Actualizado:* `{datetime.now().strftime('%H:%M')}`"    
+    )
+
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
 
 async def consultar_pods(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    start_time = time.time()
-    REQUEST_COUNT.labels("pods").inc()
+    """Consulta manual de pods"""
     logger.info(f"📩 /pods de user_id={update.effective_user.id}")
-
+    
+    # 👇 LÍNEA NUEVA 1: Mensaje inmediato
+    mensaje = await update.message.reply_text(
+        f"🔍 **Consultando pods del namespace `{K8S_NAMESPACE}`...**\n\n"
+        f"⏳ Un momento, por favor."
+    )
+    
     try:
-        # 👇 Ahora usa el namespace del .env
         estado = obtener_estado_pods(v1)
         respuesta = await ia_cb.call(consultar_ia, f"Resume este estado:\n{estado}")
+        
+        # 👇 Enviar respuesta final
         await update.message.reply_text(respuesta)
+        
+        # Borrar mensaje de "Consultando..."
+        await mensaje.delete()
         logger.info("✅ Respuesta de /pods enviada")
     except asyncio.TimeoutError:
         logger.error("⏰ Timeout consultando pods")
@@ -365,8 +391,8 @@ async def chequeo_periodico(app: Application):
     
     while True:
         try:
-            # Esperar 10 minutos (600 segundos)
-            await asyncio.sleep(600)
+            # Esperar 1 minuto (60 segundos)
+            await asyncio.sleep(60)
             
             logger.info("🔄 Ejecutando chequeo periódico del clúster...")
             
@@ -408,7 +434,7 @@ async def chequeo_periodico(app: Application):
 
 ---
 
-💡 Usa `/reporte` para ver estado completo
+💡 Usa `/resumen` para ver estado completo
 📊 Usa `/dashboard` para dashboard interactivo
 """
                 
@@ -636,10 +662,9 @@ async def cmd_resumen(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         
-        namespace = os.getenv("K8S_NAMESPACE", "atom")
         # Obtener datos
         estado = obtener_estado_pods(v1)
-        datos = obtener_datos_cluster(namespace)
+        datos = obtener_datos_cluster(K8S_NAMESPACE)
         
         if not datos:
             await update.message.reply_text("❌ Error obteniendo datos")
@@ -665,7 +690,7 @@ async def cmd_resumen(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pods_ordenados = pods_df.sort_values("Edad", ascending=True)
         
         resumen = f"""
-📊 **REPORTE KUBERNETES - {namespace}**
+📊 **REPORTE KUBERNETES - {K8S_NAMESPACE}**
 {'='*40}
 
 📈 **SALUD DEL CLÚSTER**
@@ -715,8 +740,8 @@ async def cmd_grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     try:
         mensaje = await update.message.reply_text("📊 Generando gráfico...")
-        namespace = os.getenv("K8S_NAMESPACE", "atom")
-        datos = obtener_datos_cluster(namespace)
+
+        datos = obtener_datos_cluster(K8S_NAMESPACE)
         if not datos:
             await mensaje.edit_text("❌ Error obteniendo datos")
             return
@@ -730,7 +755,7 @@ async def cmd_grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fig = px.bar(
             x=estado_counts.index.tolist(),
             y=estado_counts.values.tolist(),
-            title=f"📦 Pods en '{namespace}'",
+            title=f"📦 Pods en '{K8S_NAMESPACE}'",
             labels={"x": "Estado", "y": "Cantidad"},
             color=estado_counts.index.tolist(),
             color_discrete_map={
@@ -787,6 +812,279 @@ async def cmd_grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await mensaje.edit_text(f"❌ Error: {str(e)[:100]}")
 
 
+#================================================
+#/restart <pod> --confirm - Ejecutar reinicio
+#===========================================
+async def cmd_restart_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ejecuta el reinicio tras confirmación"""
+    args = " ".join(context.args).strip()
+
+    # Buscar nombre de pod antes de --confirm
+    if "--confirm" not in args.lower():
+        return  # No es una confirmación, ignorar
+
+    pod_name = args.replace("--confirm", "").strip()
+
+    if not pod_name:
+        return
+
+    logger.info(f"🔄 Reiniciando '{pod_name}' confirmado por user_id={update.effective_user.id}")
+
+    mensaje = await update.message.reply_text(f"🔄 **Reiniciando `{pod_name}`...**\n\n⏳ Eliminando pod.")
+
+    try:
+        # Eliminar el pod
+        v1.delete_namespaced_pod(
+            name=pod_name,
+            namespace=K8S_NAMESPACE,
+            grace_period_seconds=30,  # Esperar 30s para shutdown graceful
+            propagation_policy='Foreground'
+        )
+        
+        await mensaje.edit_text(
+            f"✅ **Pod `{pod_name}` eliminado**\n\n"
+            f"🔄 Kubernetes está recreándolo...\n"
+            f"⏱️ Tiempo estimado: 10-60 segundos\n\n"
+            f"💡 Usa `/logs {pod_name}` para ver los nuevos logs cuando esté listo."
+        )
+        
+        # Opcional: Esperar y notificar cuando esté Running de nuevo
+        # (Comentado para no bloquear el bot)
+        # await asyncio.sleep(30)
+        # ... verificar estado y notificar ...
+        
+    except ApiException as e:
+        await mensaje.edit_text(f"❌ Error reiniciando: `{e.reason}`\n\n💡 ¿El pod existe en namespace `{K8S_NAMESPACE}`?")
+    except Exception as e:
+        logger.error(f"❌ Error en /restart: {str(e)}")
+        await mensaje.edit_text(f"❌ Error: {str(e)[:200]}")
+
+
+# ===========================================
+# /logs <pod> - Ver logs de un pod
+# ===========================================
+async def cmd_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Muestra los logs de un pod específico"""
+    pod_name = " ".join(context.args).strip()
+    
+    if not pod_name:
+        await update.message.reply_text(
+            "🤔 **Uso:** `/logs <nombre-del-pod>`\n\n"
+            "Ejemplo: `/logs mi-app-backend-abc123`\n\n"
+            "💡 Tip: Usa `/resumen` para ver la lista de pods disponibles.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    logger.info(f"📩 /logs '{pod_name}' de user_id={update.effective_user.id}")
+    
+    # Mensaje inmediato de "Cargando..."
+    mensaje = await update.message.reply_text(f"📜 **Obteniendo logs de `{pod_name}`...**\n\n⏳ Un momento.")
+    
+    try:
+        # Intentar obtener logs del contenedor actual
+        logs = v1.read_namespaced_pod_log(
+            name=pod_name,
+            namespace=K8S_NAMESPACE,
+            timestamps=True,
+            tail_lines=100  # Últimas 100 líneas
+        )
+        
+        # Si los logs son muy largos, truncar para Telegram (límite ~4096 chars)
+        if len(logs) > 3500:
+            logs = logs[-3500:]  # Mantener el final (lo más reciente)
+            logs = "... [logs truncados, mostrando lo más reciente] ...\n\n" + logs
+        
+        # Formatear con código markdown
+        respuesta = f"""
+📜 **Logs de `{pod_name}`** - Namespace: `{K8S_NAMESPACE}`
+
+```text
+{logs}
+🕐 Últimas 100 líneas | 📋 Usa /logs {pod_name} --previous para ver logs del contenedor anterior
+"""
+
+        # Enviar logs
+        await update.message.reply_text(respuesta, parse_mode="Markdown")
+        
+        # Borrar mensaje de "Cargando..."
+        await mensaje.delete()
+        
+    except ApiException as e:
+        # Si falla, intentar con el contenedor anterior (--previous)
+        if "previous" in " ".join(context.args).lower() or e.status == 400:
+            try:
+                logs = v1.read_namespaced_pod_log(
+                    name=pod_name,
+                    namespace=K8S_NAMESPACE,
+                    timestamps=True,
+                    tail_lines=100,
+                    previous=True  # Logs del contenedor anterior (útil para CrashLoopBackOff)
+                )
+                
+                if len(logs) > 3500:
+                    logs = logs[-3500:]
+                    logs = "... [logs truncados] ...\n\n" + logs
+                
+                respuesta = f"""
+                📜 Logs PREVIOS de {pod_name} - Namespace: {K8S_NAMESPACE}	
+                {logs}
+                🕐 Contenedor anterior (antes del reinicio)
+                """
+                await update.message.reply_text(respuesta, parse_mode="Markdown")
+                await mensaje.delete()
+
+            except Exception as e2:
+                await mensaje.edit_text(f"❌ Error obteniendo logs: `{e2.reason}`")
+        else:
+            await mensaje.edit_text(f"❌ Error: `{e.reason}`\n\n💡 Verifica que el pod existe y está en namespace `{K8S_NAMESPACE}`")
+            
+    except Exception as e:
+        logger.error(f"❌ Error en /logs: {str(e)}")
+        await mensaje.edit_text(f"❌ Error: {str(e)[:200]}")
+
+
+#===========================================
+#/restart <pod> - Reiniciar un pod
+#===========================================
+async def cmd_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Reinicia un pod (lo elimina para que Kubernetes lo recreé)"""
+    pod_name = " ".join(context.args).strip()
+    if not pod_name:
+        await update.message.reply_text(
+            "⚠️ **Uso:** `/restart <nombre-del-pod>`\n\n"
+            "Ejemplo: `/restart mi-app-backend-abc123`\n\n"
+            "🔁 Esto eliminará el pod. Si está gestionado por un Deployment, "
+            "Kubernetes lo recreará automáticamente.",
+            parse_mode="Markdown"
+        )
+        return
+
+    logger.info(f"📩 /restart '{pod_name}' de user_id={update.effective_user.id}")
+
+    # Mensaje de confirmación con botón implícito (texto)
+    confirm_msg = f"""
+    ⚠️ CONFIRMAR REINICIO
+📦 Pod: {pod_name}
+📁 Namespace: {K8S_NAMESPACE}
+🔁 Esta acción:
+
+    Eliminará el pod actual
+    Kubernetes lo recreará (si está en un Deployment/ReplicaSet)
+    Habrá ~10-30 segundos de indisponibilidad
+
+✅ Para confirmar, envía: /restart {pod_name} --confirm
+❌ Para cancelar, no hagas nada o envía cualquier otro mensaje
+"""
+    await update.message.reply_text(confirm_msg, parse_mode="Markdown")
+    # Nota: En un bot real, podrías usar InlineKeyboardButton para confirmación interactiva
+    # Por simplicidad, usamos el flag --confirm en el mismo comando
+    
+
+#===========================================
+#/describe <pod> - Descripción detallada
+#===========================================
+async def cmd_describe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Muestra información detallada de un pod (equivalente a kubectl describe)"""
+    pod_name = " ".join(context.args).strip()
+    
+    if not pod_name:
+        await update.message.reply_text(
+            "🔍 **Uso:** `/describe <nombre-del-pod>`\n\n"
+            "Ejemplo: `/describe mi-app-backend-abc123`\n\n"
+            "📋 Muestra: estado, eventos, contenedores, recursos, mounts, etc.",
+            parse_mode="Markdown"
+        )
+        return
+
+    logger.info(f"📩 /describe '{pod_name}' de user_id={update.effective_user.id}")
+
+    mensaje = await update.message.reply_text(
+        f"🔍 **Obteniendo detalles de `{pod_name}`...**\n\n⏳ Consultando Kubernetes API."
+    )
+
+    try:
+        # Obtener el pod completo
+        pod = v1.read_namespaced_pod(name=pod_name, namespace=K8S_NAMESPACE)
+        
+        # Construir descripción formateada
+        descripcion = f"""
+📋 **DESCRIPCIÓN: `{pod_name}`**
+📁 Namespace: `{K8S_NAMESPACE}`
+
+🔹 **Estado General**
+• Fase: `{pod.status.phase}`
+• IP: `{pod.status.pod_ip or 'N/A'}`
+• Node: `{pod.spec.node_name or 'N/A'}`
+• QoS: `{pod.status.qos_class or 'N/A'}`
+
+🔹 **Contenedores**
+"""
+        # Información de cada contenedor
+        for i, container in enumerate(pod.spec.containers, 1):
+            descripcion += f"\n{i}. **{container.name}**\n"
+            descripcion += f"   • Imagen: `{container.image.split('/')[-1]}`\n"
+            
+            # Estado del contenedor si está disponible
+            if pod.status.container_statuses and i <= len(pod.status.container_statuses):
+                cs = pod.status.container_statuses[i-1]
+                if cs.state:
+                    descripcion += f"   • Estado: `{cs.state}`\n"
+                descripcion += f"   • Ready: {'✅' if cs.ready else '❌'}\n"
+                descripcion += f"   • Reinicios: `{cs.restart_count}`\n"
+        
+        # Eventos recientes del pod
+        try:
+            events = v1.list_namespaced_event(
+                namespace=K8S_NAMESPACE,
+                field_selector=f"involvedObject.name={pod_name}",
+                limit=5
+            )
+            
+            if events.items:
+                descripcion += f"\n🔹 **Eventos Recientes**\n"
+                for event in events.items[:3]:  # Máximo 3 eventos
+                    msg = event.message[:100].replace("\n", " ")
+                    descripcion += f"• `{event.type}`: {msg}...\n"
+        except Exception:
+            pass  # Si no hay eventos o no hay permisos, continuar
+        
+        descripcion += f"\n🕐 *Actualizado: {datetime.now().strftime('%H:%M:%S')}*"
+        
+        # Si la descripción es muy larga, usar IA para resumir
+        if len(descripcion) > 3500:
+            resumen_prompt = (
+                f"Resume esta información técnica de Kubernetes en puntos clave claros:\n\n"
+                f"{descripcion[:3000]}\n\n"
+                f"Enfócate en:\n"
+                f"- Estado actual del pod\n"
+                f"- Problemas detectados (si los hay)\n"
+                f"- Recomendaciones si hay errores\n\n"
+                f"Máximo 15 líneas, formato markdown simple."
+            )
+            try:
+                resumen_ia = await consultar_ia(resumen_prompt)
+                descripcion = (
+                    f"📋 **RESUMEN IA de `{pod_name}`**\n\n"
+                    f"{resumen_ia}\n\n"
+                    f"---\n\n"
+                    f"*Usa `/describe {pod_name} --full` para ver información completa.*"
+                )
+            except Exception:
+                descripcion = descripcion[:3500] + "\n\n... [truncado] ..."
+        
+        await update.message.reply_text(descripcion, parse_mode="Markdown")
+        await mensaje.delete()
+        
+    except ApiException as e:
+        await mensaje.edit_text(
+            f"❌ Error: `{e.reason}`\n\n"
+            f"💡 Verifica que el pod existe en namespace `{K8S_NAMESPACE}`"
+        )
+    except Exception as e:
+        logger.error(f"❌ Error en /describe: {str(e)}")
+        await mensaje.edit_text(f"❌ Error: {str(e)[:200]}")
+
 
 async def main_async():
     logger.info("🚀 Starting K8s Bot with IA...")
@@ -803,7 +1101,14 @@ async def main_async():
     app.add_handler(CommandHandler("dashboard", cmd_dashboard))
     app.add_handler(CommandHandler("resumen", cmd_resumen))
     app.add_handler(CommandHandler("grafico", cmd_grafico))
-    app.add_handler(CommandHandler("foto", cmd_foto_dashboard))
+    app.add_handler(CommandHandler("foto", cmd_foto_dashboard))    
+
+    # 👇 AÑADIR ESTOS 3 HANDLERS NUEVOS:
+    app.add_handler(CommandHandler("logs", cmd_logs))
+    app.add_handler(CommandHandler("restart", cmd_restart))
+    app.add_handler(CommandHandler("restart", cmd_restart_confirm))  # Para --confirm
+    app.add_handler(CommandHandler("describe", cmd_describe))
+
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mensaje_normal))
 
     # Configurar señales
