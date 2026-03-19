@@ -319,66 +319,6 @@ async def graceful_shutdown(app: Application):
         loop = asyncio.get_running_loop()
         loop.stop()
 
-async def main_async():
-    logger.info("🚀 Starting K8s Bot with IA...")
-
-    app = Application.builder() \
-        .token(TOKEN) \
-        .job_queue(None) \
-        .build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("pods", consultar_pods))
-    app.add_handler(CommandHandler("ia", pregunta_ia))
-    app.add_handler(CommandHandler("dashboard", cmd_dashboard))    
-    app.add_handler(CommandHandler("foto", cmd_foto_dashboard))
-    app.add_handler(CommandHandler("reporte", cmd_reporte))
-    app.add_handler(CommandHandler("grafico", cmd_grafico))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mensaje_normal))
-
-    # Configurar señales ANTES de iniciar
-    setup_signal_handlers(app)
-
-    # ✅ Inicialización correcta del bot
-    await app.initialize()
-    await app.start()
-    
-    # ✅ ESTO FALTABA: Iniciar polling para recibir mensajes de Telegram
-    await app.updater.start_polling(drop_pending_updates=True)
-    logger.info("✅ Polling iniciado. Bot escuchando mensajes...")
-    
-    # Iniciar tarea de fondo
-    background_task = asyncio.create_task(chequeo_periodico(app))
-    logger.info("✅ Bot running. Waiting for messages...")
-
-    try:
-        # Esperar indefinidamente, pero permitiendo interrupción
-        await asyncio.Event().wait()
-    except asyncio.CancelledError:
-        logger.info("👋 Main task cancelled")
-    finally:
-        # Cleanup ordenado
-        background_task.cancel()
-        try:
-            await background_task
-        except asyncio.CancelledError:
-            pass
-        # Detener polling y shutdown
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
-        logger.info("✅ Bot shut down cleanly")
-
-if __name__ == '__main__':
-    try:
-        asyncio.run(main_async())
-    except KeyboardInterrupt:
-        logger.info("👋 Bot stopped by Ctrl+C")
-    except Exception as e:
-        logger.critical(f"❌ Error crítico: {e}", exc_info=True)
-        sys.exit(1)
-
-
 async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Envía el link al dashboard web"""
     dashboard_url = "http://10.1.147.41:8501"
@@ -546,3 +486,63 @@ async def cmd_grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"❌ Error en /grafico: {str(e)}")
         await mensaje.edit_text(f"❌ Error generando gráfico: {str(e)[:100]}")
+
+
+async def main_async():
+    logger.info("🚀 Starting K8s Bot with IA...")
+
+    app = Application.builder() \
+        .token(TOKEN) \
+        .job_queue(None) \
+        .build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("pods", consultar_pods))
+    app.add_handler(CommandHandler("ia", pregunta_ia))
+    app.add_handler(CommandHandler("dashboard", cmd_dashboard))    
+    app.add_handler(CommandHandler("foto", cmd_foto_dashboard))
+    app.add_handler(CommandHandler("reporte", cmd_reporte))
+    app.add_handler(CommandHandler("grafico", cmd_grafico))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mensaje_normal))
+
+    # Configurar señales ANTES de iniciar
+    setup_signal_handlers(app)
+
+    # ✅ Inicialización correcta del bot
+    await app.initialize()
+    await app.start()
+    
+    # ✅ ESTO FALTABA: Iniciar polling para recibir mensajes de Telegram
+    await app.updater.start_polling(drop_pending_updates=True)
+    logger.info("✅ Polling iniciado. Bot escuchando mensajes...")
+    
+    # Iniciar tarea de fondo
+    background_task = asyncio.create_task(chequeo_periodico(app))
+    logger.info("✅ Bot running. Waiting for messages...")
+
+    try:
+        # Esperar indefinidamente, pero permitiendo interrupción
+        await asyncio.Event().wait()
+    except asyncio.CancelledError:
+        logger.info("👋 Main task cancelled")
+    finally:
+        # Cleanup ordenado
+        background_task.cancel()
+        try:
+            await background_task
+        except asyncio.CancelledError:
+            pass
+        # Detener polling y shutdown
+        await app.updater.stop()
+        await app.stop()
+        await app.shutdown()
+        logger.info("✅ Bot shut down cleanly")
+
+if __name__ == '__main__':
+    try:
+        asyncio.run(main_async())
+    except KeyboardInterrupt:
+        logger.info("👋 Bot stopped by Ctrl+C")
+    except Exception as e:
+        logger.critical(f"❌ Error crítico: {e}", exc_info=True)
+        sys.exit(1)
