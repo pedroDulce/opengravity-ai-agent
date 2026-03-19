@@ -391,8 +391,8 @@ async def chequeo_periodico(app: Application):
     
     while True:
         try:
-            # Esperar 1 minuto (60 segundos)
-            await asyncio.sleep(60)
+            # Esperar 1 minuto (600 segundos)
+            await asyncio.sleep(600)
             
             logger.info("🔄 Ejecutando chequeo periódico del clúster...")
             
