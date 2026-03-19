@@ -1,0 +1,155 @@
+# -----------------------------------------------------------
+# 1. ARCHIVOS DE ENTORNO Y SECRETOS (CRÍTICO)
+# -----------------------------------------------------------
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+.env.*.local
+*.pem
+*.key
+*.secret
+*.credentials
+secrets.json
+config_secret.py
+
+# -----------------------------------------------------------
+# 2. PYTHON ARTIFACTS (Bytecode y Caché)
+# -----------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# -----------------------------------------------------------
+# 3. ENTORNOS VIRTUALES
+# -----------------------------------------------------------
+# Si usas venv, virtualenv, conda, etc.
+venv/
+ENV/
+env/
+.venv/
+.env/
+.virtualenv/
+.pytest_cache/
+
+# -----------------------------------------------------------
+# 4. IDEs y EDITORES DE CÓDIGO
+# -----------------------------------------------------------
+# VS Code
+.vscode/
+*.code-workspace
+
+# PyCharm / IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+.\#*
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# -----------------------------------------------------------
+# 5. BASES DE DATOS Y LOGS
+# -----------------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+*.log
+logs/
+*.pid
+*.seed
+*.pid.lock
+
+# -----------------------------------------------------------
+# 6. TESTING Y COBERTURA
+# -----------------------------------------------------------
+.coverage
+htmlcov/
+.tox/
+.nox/
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# -----------------------------------------------------------
+# 7. JUPYTER NOTEBOOKS
+# -----------------------------------------------------------
+.ipynb_checkpoints
+*.ipynb_checkpoints
+
+# -----------------------------------------------------------
+# 8. TYPE CHECKING (MyPy)
+# -----------------------------------------------------------
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# -----------------------------------------------------------
+# 9. SISTEMA OPERATIVO (Basura)
+# -----------------------------------------------------------
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.fuse_hidden*
+.Trash-*
+.nfs*
+
+# -----------------------------------------------------------
+# 10. OTROS
+# -----------------------------------------------------------
+# Si usas Docker
+*.dockerignore
+
+# Si usas AWS
+.aws/
+
+# Archivos temporales generales
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
