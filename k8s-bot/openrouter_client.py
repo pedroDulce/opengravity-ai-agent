@@ -1,3 +1,4 @@
+# openrouter_client.py
 import os
 import httpx
 from dotenv import load_dotenv
@@ -5,14 +6,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 API_KEY = os.getenv("OPENROUTER_API_KEY")
-MODEL = os.getenv("OPENROUTER_MODEL")
-SITE_URL = "https://it.muface.es"  # Opcional, para estadísticas
-SITE_NAME = "K8s Telegram Bot"  # Opcional
+MODEL = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.2-90b-vision-instruct:free")
+SITE_URL = "https://k8s-bot.local"
+SITE_NAME = "K8s Telegram Bot"
 
 async def consultar_ia(mensaje_usuario, contexto=""):
-    """
-    Envía un mensaje a OpenRouter y recibe una respuesta de la IA.
-    """
+    """Envía un mensaje a OpenRouter y recibe una respuesta de la IA."""
     url = "https://openrouter.ai/api/v1/chat/completions"
     
     headers = {
@@ -25,12 +24,11 @@ async def consultar_ia(mensaje_usuario, contexto=""):
     system_prompt = """Eres un asistente experto en Kubernetes y monitoreo de clústeres.
 Tu trabajo es ayudar al usuario a consultar el estado de sus pods y servicios.
 
-REGLAS IMPORTANTES:
-1. Si el usuario pregunta sobre pods, estado, kubernetes, clúster, responde que puedes consultar esa información.
-2. Si el usuario hace una pregunta general de Kubernetes, responde con tu conocimiento.
-3. Sé conciso y amigable.
-4. Usa emojis para hacer la respuesta más amigable.
-5. Si no estás seguro, ofrece consultar el clúster real.
+REGLAS:
+1. Si el usuario pregunta sobre pods, estado, kubernetes, clúster, ofrece consultar información.
+2. Si es una pregunta general de Kubernetes, responde con tu conocimiento.
+3. Sé conciso, amigable y usa emojis.
+4. Si no estás seguro, ofrece consultar el clúster real.
 
 CONTEXTO ACTUAL DEL CLÚSTER:
 """ + contexto
@@ -46,7 +44,8 @@ CONTEXTO ACTUAL DEL CLÚSTER:
     }
     
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        # ⚠️ verify=False para entorno corporativo con certificados autofirmados
+        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()

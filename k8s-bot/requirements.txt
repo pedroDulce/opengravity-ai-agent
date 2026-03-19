@@ -1,7 +1,16 @@
-python-telegram-bot==21.0
+python-telegram-bot==21.7
 kubernetes==30.1.0
 python-dotenv==1.0.1
-streamlit==1.40.0
+
+# Observabilidad
+prometheus-client==0.20.0
+
+# HTTP (alineado con PTB y async moderno)
+httpx>=0.26.0,<0.28.0
+
+# (opcionales, pero los mantengo si los usas en otros módulos)
 pandas>=2.2.3
 numpy>=2.1.0
-httpx>=0.25.0,<0.28.0
+
+# UI (solo si realmente lo usas)
+streamlit==1.40.0
