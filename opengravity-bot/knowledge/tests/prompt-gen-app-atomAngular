@@ -132,3 +132,6 @@ kubectl auth can-i get pods --all-namespaces
 
 # ¿Puedes listar namespaces?
 kubectl auth can-i list namespaces
+
+cd C:\Users\pedrodulce\develop\antigravity\k8s-bot
+streamlit run dashboard.py

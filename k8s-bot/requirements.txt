@@ -1,16 +1,40 @@
-python-telegram-bot==21.7
-kubernetes==30.1.0
-python-dotenv==1.0.1
+# ===========================================
+# K8s Bot - Dependencias Completas
+# ===========================================
 
-# Observabilidad
-prometheus-client==0.20.0
+# Telegram Bot
+python-telegram-bot==21.0
+
+# Kubernetes
+kubernetes==30.1.0
+
+# Variables de entorno
+python-dotenv==1.0.1
 
 # HTTP (alineado con PTB y async moderno)
 httpx>=0.26.0,<0.28.0
 
-# (opcionales, pero los mantengo si los usas en otros módulos)
+# Dashboard Web
+streamlit==1.40.0
 pandas>=2.2.3
 numpy>=2.1.0
+plotly==6.6.0
 
-# UI (solo si realmente lo usas)
-streamlit==1.40.0
+# Gráficos y visualización
+kaleido==0.2.1
+narwhals>=1.0.0
+
+# Capturas de pantalla (Dashboard a imagen)
+selenium==4.27.1
+pillow==10.4.0
+
+# Utilidades
+packaging>=20,<25
+urllib3>=2.0.0
+certifi>=2024.0.0
+
+# Métricas
+prometheus-client==0.21.0
+
+# Scheduler (si lo necesitas en el futuro)
+apscheduler==3.11.0

@@ -4,6 +4,7 @@
 # ✅ Background task con timeout y error handling
 
 import os
+from screenshot_dashboard import tomar_screenshot_dashboard
 import sys
 import ssl
 import warnings
@@ -15,10 +16,12 @@ from typing import Callable, Any
 import logging
 import time
 from datetime import datetime
-
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from prometheus_client import start_http_server, Counter, Histogram
+import plotly.express as px
+import plotly.io as pio
+from io import BytesIO
 
 # ============================================================
 # ⚠️ CONFIGURACIÓN CRÍTICA: ANTES DE CUALQUIER IMPORT DE RED
@@ -316,7 +319,6 @@ async def graceful_shutdown(app: Application):
         loop = asyncio.get_running_loop()
         loop.stop()
 
-
 async def main_async():
     logger.info("🚀 Starting K8s Bot with IA...")
 
@@ -328,6 +330,10 @@ async def main_async():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("pods", consultar_pods))
     app.add_handler(CommandHandler("ia", pregunta_ia))
+    app.add_handler(CommandHandler("dashboard", cmd_dashboard))    
+    app.add_handler(CommandHandler("foto", cmd_foto_dashboard))
+    app.add_handler(CommandHandler("reporte", cmd_reporte))
+    app.add_handler(CommandHandler("grafico", cmd_grafico))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mensaje_normal))
 
     # Configurar señales ANTES de iniciar
@@ -371,3 +377,172 @@ if __name__ == '__main__':
     except Exception as e:
         logger.critical(f"❌ Error crítico: {e}", exc_info=True)
         sys.exit(1)
+
+
+async def cmd_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Envía el link al dashboard web"""
+    dashboard_url = "http://10.1.147.41:8501"
+    
+    msg = f"""
+📊 **Dashboard Kubernetes**
+
+Accede al dashboard interactivo desde tu navegador:
+
+🔗 {dashboard_url}
+
+**Características:**
+✅ Métricas en tiempo real
+✅ Gráficos interactivos
+✅ Filtros por estado
+✅ Auto-refresh cada 30s
+
+⚠️ *Solo accesible desde la red corporativa*
+"""
+    await update.message.reply_text(msg, parse_mode="Markdown")
+
+async def cmd_foto_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Envía una foto del dashboard"""
+    mensaje = await update.message.reply_text("📸 Tomando captura del dashboard...")
+    
+    try:
+        # Tomar screenshot
+        tomar_screenshot_dashboard(
+            url="http://localhost:8501",
+            output="dashboard_temp.png"
+        )
+        
+        # Enviar como foto
+        with open("dashboard_temp.png", "rb") as foto:
+            await update.message.reply_photo(
+                photo=foto,
+                caption="📊 **Dashboard Kubernetes**\n\nCaptura en tiempo real del estado del clúster."
+            )
+        
+        await mensaje.delete()
+        
+        # Limpiar archivo temporal
+        os.remove("dashboard_temp.png")
+        
+    except Exception as e:
+        await mensaje.edit_text(f"❌ Error tomando screenshot: {str(e)}")
+
+
+async def cmd_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Envía un reporte visual del estado del clúster"""
+    logger.info(f"📩 /reporte de user_id={update.effective_user.id}")
+    
+    try:
+        # Obtener datos
+        estado = obtener_estado_pods(v1)
+        datos = obtener_datos_cluster(K8S_NAMESPACE)
+        
+        if not datos:
+            await update.message.reply_text("❌ Error obteniendo datos")
+            return
+        
+        pods_df = datos["pods"]
+        
+        # Calcular métricas
+        total = len(pods_df)
+        running = len(pods_df[pods_df["Estado"] == "Running"])
+        pending = len(pods_df[pods_df["Estado"] == "Pending"])
+        error = total - running - pending
+        
+        salud = (running / total * 100) if total > 0 else 0
+        
+        # Crear barra de progreso visual
+        barra_len = 10
+        running_bars = int((running / total) * barra_len) if total > 0 else 0
+        barra = "🟩" * running_bars + "⬜" * (barra_len - running_bars)
+        
+        # Top 5 pods por edad
+        pods_df["Edad"] = pd.to_datetime(pods_df["Edad"], errors='coerce')
+        pods_ordenados = pods_df.sort_values("Edad", ascending=True)
+        
+        reporte = f"""
+📊 **REPORTE KUBERNETES - {K8S_NAMESPACE}**
+{'='*40}
+
+📈 **SALUD DEL CLÚSTER**
+
+{barra} {salud:.1f}%
+
+ Total Pods: {total}
+🟩 Running: {running}
+🟨 Pending: {pending}
+🟥 Error: {error}
+
+🔄 Reinicios totales: {pods_df['Reinicios'].sum()}
+
+🚀 **TOP 5 PODS MÁS ANTIGUOS**
+
+"""
+        for i, (_, pod) in enumerate(pods_ordenados.head(5).iterrows(), 1):
+            edad_str = str(pod["Edad"]).split(" ")[0] if pd.notna(pod["Edad"]) else "N/A"
+            reporte += f"{i}. `{pod['Nombre']}` - {edad_str}\n"
+        
+        reporte += f"""
+
+📁 **Distribución por Node**
+
+"""
+        for node, count in pods_df["Node"].value_counts().head(3).items():
+            reporte += f"• {node.split('-')[0]}: {count} pods\n"
+        
+        reporte += f"""
+
+🕐 *Actualizado: {datetime.now().strftime('%H:%M:%S')}*
+
+💡 Usa `/dashboard` para ver el dashboard completo
+"""
+        
+        await update.message.reply_text(reporte, parse_mode="Markdown")
+        
+    except Exception as e:
+        logger.error(f"❌ Error en /reporte: {str(e)}")
+        await update.message.reply_text(f"❌ Error generando reporte: {str(e)[:100]}")
+
+
+async def cmd_grafico(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Envía un gráfico de estado de pods"""
+    logger.info(f"📩 /grafico de user_id={update.effective_user.id}")
+    
+    try:
+        mensaje = await update.message.reply_text("📊 Generando gráfico...")
+        
+        datos = obtener_datos_cluster(K8S_NAMESPACE)
+        if not datos:
+            await mensaje.edit_text("❌ Error obteniendo datos")
+            return
+        
+        pods_df = datos["pods"]
+        
+        # Crear gráfico de pastel
+        estado_counts = pods_df["Estado"].value_counts().reset_index()
+        estado_counts.columns = ["Estado", "Cantidad"]
+        
+        fig = px.pie(
+            estado_counts,
+            values="Cantidad",
+            names="Estado",
+            title=f"Pods en namespace '{K8S_NAMESPACE}'",
+            color_discrete_sequence=px.colors.qualitative.Set2,
+            hole=0.4
+        )
+        
+        # Convertir a imagen PNG
+        img_bytes = BytesIO()
+        fig.write_image(img_bytes, format="png", width=800, height=600, scale=2)
+        img_bytes.seek(0)
+        
+        # Enviar como foto
+        await update.message.reply_photo(
+            photo=img_bytes,
+            caption=f"📊 **Estado de Pods - {K8S_NAMESPACE}**\n\nTotal: {len(pods_df)} pods"
+        )
+        
+        await mensaje.delete()
+        
+    except Exception as e:
+        logger.error(f"❌ Error en /grafico: {str(e)}")
+        await mensaje.edit_text(f"❌ Error generando gráfico: {str(e)[:100]}")
