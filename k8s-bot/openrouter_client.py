@@ -44,8 +44,11 @@ CONTEXTO ACTUAL DEL CLÚSTER:
     }
     
     try:
-        # ⚠️ verify=False para entorno corporativo con certificados autofirmados
-        async with httpx.AsyncClient(timeout=30.0, verify=False) as client:
+        # En openrouter_client.py, dentro de consultar_ia():
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(30.0, connect=10.0, read=60.0, write=10.0), 
+            verify=False
+        ) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
