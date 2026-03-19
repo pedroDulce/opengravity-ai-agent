@@ -2,22 +2,25 @@ from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 import os
 
+
+from kubernetes import client, config
+from kubernetes.client.rest import ApiException
+import os
+
 def cargar_k8s():
     """Carga la configuración de Kubernetes"""
     contexto = os.getenv("K8S_CONTEXT", "dev-atom")
     config_path = os.getenv("K8S_CONFIG_PATH")
     
     try:
-        # Si hay una ruta específica, úsala. Si no, usa la por defecto.
         if config_path:
-            # Convertir ruta relativa a absoluta
             if not os.path.isabs(config_path):
                 config_path = os.path.join(os.path.dirname(__file__), config_path)
             
             print(f"📁 Usando kubeconfig: {config_path}")
             config.load_kube_config(config_file=config_path, context=contexto)
         else:
-            print(f"📁 Usando kubeconfig por defecto (~/.kube/config)")
+            print(f"📁 Usando kubeconfig por defecto")
             config.load_kube_config(context=contexto)
         
         v1 = client.CoreV1Api()
@@ -27,28 +30,42 @@ def cargar_k8s():
         print(f"❌ Error conectando a K8s: {e}")
         return None
 
-def obtener_estado_pods(v1):
-    """Obtiene el estado de todos los pods"""
+def obtener_estado_pods(v1, namespace=None):
+    """Obtiene el estado de los pods en un namespace específico o todos"""
     if not v1:
         return "❌ Error: No hay conexión con Kubernetes."
     
+    # Obtener namespace del .env si no se especifica
+    if not namespace:
+        namespace = os.getenv("K8S_NAMESPACE")
+    
     try:
-        pods = v1.list_pod_for_all_namespaces(watch=False)
+        # Si hay namespace, consulta solo ese. Si no, todos (puede fallar por permisos)
+        if namespace:
+            print(f"🔍 Consultando pods en namespace: {namespace}")
+            pods = v1.list_namespaced_pod(namespace=namespace)
+        else:
+            print(f"🔍 Consultando pods en TODOS los namespaces")
+            pods = v1.list_pod_for_all_namespaces(watch=False)
+        
         reporte = []
         problemas = []
         
         for pod in pods.items:
             nombre = pod.metadata.name
-            namespace = pod.metadata.namespace
+            ns = pod.metadata.namespace
             estado = pod.status.phase
             
-            linea = f"📦 `{namespace}/{nombre}`: {estado}"
+            linea = f"📦 `{ns}/{nombre}`: {estado}"
             reporte.append(linea)
             
             if estado != "Running":
-                problemas.append(f"⚠️ **ALERTA**: `{namespace}/{nombre}` está en **{estado}**")
+                problemas.append(f"⚠️ **ALERTA**: `{ns}/{nombre}` está en **{estado}**")
         
-        resumen = f"📊 **Total Pods:** {len(reporte)}\n\n"
+        resumen = f"📊 **Total Pods:** {len(reporte)}\n"
+        if namespace:
+            resumen += f"📁 **Namespace:** `{namespace}`\n"
+        resumen += "\n"
         
         if problemas:
             resumen += "🚨 **PROBLEMAS DETECTADOS:**\n" + "\n".join(problemas)
@@ -56,52 +73,14 @@ def obtener_estado_pods(v1):
             resumen += "✅ **Todos los pods están Running**"
         
         if len(reporte) > 0:
-            resumen += "\n\n--- 📋 Detalle (primeros 20) ---\n"
-            resumen += "\n".join(reporte[:20])
-            if len(reporte) > 20:
-                resumen += f"\n... y {len(reporte) - 20} más."
+            resumen += "\n\n--- 📋 Detalle ---\n"
+            resumen += "\n".join(reporte[:30])
+            if len(reporte) > 30:
+                resumen += f"\n... y {len(reporte) - 30} más."
         
         return resumen
 
     except ApiException as e:
         return f"❌ Error consultando K8s: {e.reason}"
-
-def obtener_estado_pods(v1):
-    """Obtiene el estado de todos los pods"""
-    if not v1:
-        return "❌ Error: No hay conexión con Kubernetes."
-    
-    try:
-        pods = v1.list_pod_for_all_namespaces(watch=False)
-        reporte = []
-        problemas = []
-        
-        for pod in pods.items:
-            nombre = pod.metadata.name
-            namespace = pod.metadata.namespace
-            estado = pod.status.phase
-            
-            linea = f"📦 `{namespace}/{nombre}`: {estado}"
-            reporte.append(linea)
-            
-            if estado != "Running":
-                problemas.append(f"⚠️ **ALERTA**: `{namespace}/{nombre}` está en **{estado}**")
-        
-        resumen = f"📊 **Total Pods:** {len(reporte)}\n\n"
-        
-        if problemas:
-            resumen += "🚨 **PROBLEMAS DETECTADOS:**\n" + "\n".join(problemas)
-        else:
-            resumen += "✅ **Todos los pods están Running**"
-        
-        # Añadir primeros 20 pods como detalle
-        if len(reporte) > 0:
-            resumen += "\n\n--- 📋 Detalle (primeros 20) ---\n"
-            resumen += "\n".join(reporte[:20])
-            if len(reporte) > 20:
-                resumen += f"\n... y {len(reporte) - 20} más."
-        
-        return resumen
-
-    except ApiException as e:
-        return f"❌ Error consultando K8s: {e.reason}"
+    except Exception as e:
+        return f"❌ Error inesperado: {str(e)}"

@@ -108,11 +108,27 @@ npm install @angular/material@^19.0.0 @angular/cdk@^19.0.0 --legacy-peer-deps
 
 
 
-Esto pasa porque `fallback_theme` se define dentro de un `if`, pero se usa fuera de ese bloque.
+*********************************************************************************
+K8S
+*********************************************************************************
 
----
+# Usa tu archivo kubeconfig personalizado
+$env:KUBECONFIG="C:\Users\pedrodulce\develop\antigravity\k8s-bot\dev-atom-kubeconfig"
 
-## ✅ Solución #1: Regex que soporta CON y SIN bloques markdown
+# Ver contexto actual
+kubectl config current-context
 
-**Reemplaza `_parse_and_write_files` con esta versión más flexible:**
+# Ver usuario asociado
+kubectl config view --minify -o jsonpath="{.users[0].name}"
 
+
+kubectl get pods -n default
+
+# ¿Puedes listar pods?
+kubectl auth can-i list pods --all-namespaces
+
+# ¿Puedes ver pods?
+kubectl auth can-i get pods --all-namespaces
+
+# ¿Puedes listar namespaces?
+kubectl auth can-i list namespaces

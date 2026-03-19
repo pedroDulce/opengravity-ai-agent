@@ -181,6 +181,7 @@ async def consultar_pods(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"📩 /pods de user_id={update.effective_user.id}")
 
     try:
+        # 👇 Ahora usa el namespace del .env
         estado = obtener_estado_pods(v1)
         respuesta = await ia_cb.call(consultar_ia, f"Resume este estado:\n{estado}")
         await update.message.reply_text(respuesta)
