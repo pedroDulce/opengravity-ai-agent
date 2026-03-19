@@ -24,7 +24,11 @@ Usos del agente:
     - Sin servicios, sin APIs, sin formularios
     - Solo valida que compila y corre en localhost:4200"
 
-/create test-demo "App Angular demo"
+/create atom-ciudades "App ATOM con:
+- LibCiudadesListComponent: tabla con datos mock
+- LibCiudadesDetailComponent: detalle con mat-card
+- Servicio CiudadesService con HttpClient
+- Routing entre lista y detalle"
 
 
 Ejemplo de mensaje en Telegram para crear una app Angular con web atom componentes:
