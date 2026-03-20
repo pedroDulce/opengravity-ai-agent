@@ -35,6 +35,10 @@ import pandas as pd
 import plotly.express as px
 from io import BytesIO
 
+# Importar el agente
+from k8s_agent import agente_k8s
+from k8s_tools import TOOLS_REGISTRY
+
 # Circuit breaker
 from typing import Callable, Any
 
@@ -86,6 +90,133 @@ print("🔓 SSL global: verify desactivado")
 print("🔧 Aplicando monkey-patch a httpx.AsyncClient...")
 import httpx
 _original_asyncclient_init = httpx.AsyncClient.__init__
+
+
+# ===========================================
+# 🤖 HANDLER DE LENGUAJE NATURAL
+# ===========================================
+async def mensaje_natural_ia(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Procesa mensajes en lenguaje natural y ejecuta acciones con IA
+    """
+    texto = update.message.text
+    logger.info(f"📩 Mensaje natural de user_id={update.effective_user.id}: '{texto[:50]}...'")
+    
+    # Mensaje inmediato
+    mensaje = await update.message.reply_text(
+        "🤔 **Analizando tu petición...**\n\n⏳ Un momento."
+    )
+    
+    try:
+        # 1. Consultar al agente de IA
+        plan = await agente_k8s(texto)
+        
+        # 2. Si es respuesta directa, enviarla
+        if plan.get("action") == "respond_directly":
+            await mensaje.edit_text(plan.get("response", "⚠️ No entendí tu petición"))
+            return
+        
+        # 3. Si requiere confirmación, pedir al usuario
+        if plan.get("requires_confirmation", False):
+            herramientas = plan.get("tools", [])
+            explicacion = plan.get("explanation", "")
+            
+            confirm_msg = f"⚠️ **CONFIRMACIÓN REQUERIDA**\n\n"
+            confirm_msg += f"{explicacion}\n\n"
+            confirm_msg += f"**Acciones:**\n"
+            for h in herramientas:
+                confirm_msg += f"• `{h['name']}` con parámetros: `{json.dumps(h['parameters'])}`\n"
+            confirm_msg += f"\n✅ Para confirmar, responde: `sí` o `confirmar`"
+            
+            await mensaje.edit_text(confirm_msg, parse_mode="Markdown")
+            
+            # Guardar el plan pendiente en context
+            context.user_data['pending_action'] = plan
+            return
+        
+        # 4. Ejecutar herramientas directamente
+        resultados = []
+        for herramienta in plan.get("tools", []):
+            nombre = herramienta.get("name")
+            params = herramienta.get("parameters", {})
+            
+            if nombre in TOOLS_REGISTRY:
+                try:
+                    func = TOOLS_REGISTRY[nombre]["function"]
+                    resultado = func(**params)
+                    resultados.append({
+                        "herramienta": nombre,
+                        "exitoso": True,
+                        "datos": resultado
+                    })
+                except Exception as e:
+                    resultados.append({
+                        "herramienta": nombre,
+                        "exitoso": False,
+                        "error": str(e)
+                    })
+        
+        # 5. Formatear respuesta final con IA
+        contexto_resultados = json.dumps(resultados, indent=2, default=str)[:2000]
+        
+        prompt_final = f"""
+El usuario preguntó: {texto}
+
+Ejecuté estas herramientas y obtuve:
+{contexto_resultados}
+
+Genera una respuesta CLARA y ÚTIL en español:
+- Resume los hallazgos principales
+- Usa formato markdown (negritas, listas, código)
+- Incluye emojis para hacerlo más legible
+- Máximo 300 palabras
+"""
+        
+        respuesta_final = await agente_k8s(prompt_final)
+        
+        if respuesta_final.get("action") == "respond_directly":
+            await mensaje.edit_text(
+                respuesta_final.get("response", "✅ Petición completada"),
+                parse_mode="Markdown"
+            )
+        else:
+            await mensaje.edit_text("✅ Petición completada")
+        
+    except Exception as e:
+        logger.error(f"❌ Error en mensaje natural: {str(e)}")
+        await mensaje.edit_text(f"❌ Error: {str(e)[:200]}")
+    finally:
+        pass  # El mensaje se edita, no se borra
+
+# Handler para confirmaciones
+async def confirmar_accion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Procesa confirmaciones del usuario"""
+    texto = update.message.text.lower()
+    
+    if texto in ["sí", "si", "confirmar", "yes", "confirm"]:
+        if 'pending_action' in context.user_data:
+            plan = context.user_data['pending_action']
+            
+            # Ejecutar herramientas
+            for herramienta in plan.get("tools", []):
+                nombre = herramienta.get("name")
+                params = herramienta.get("parameters", {})
+                
+                if nombre in TOOLS_REGISTRY:
+                    func = TOOLS_REGISTRY[nombre]["function"]
+                    try:
+                        resultado = func(**params)
+                        await update.message.reply_text(f"✅ {resultado}")
+                    except Exception as e:
+                        await update.message.reply_text(f"❌ Error: {str(e)}")
+            
+            del context.user_data['pending_action']
+        else:
+            await update.message.reply_text("⚠️ No hay acciones pendientes")
+    else:
+        await update.message.reply_text("❌ Acción cancelada")
+        if 'pending_action' in context.user_data:
+            del context.user_data['pending_action']
 
 # ============================================================
 # 📊 FUNCIÓN PARA OBTENER DATOS DEL CLÚSTER
@@ -1094,6 +1225,11 @@ async def main_async():
         .job_queue(None) \
         .build()
 
+# En main_async(), añade:
+
+# Handler para lenguaje natural (DEBE IR ANTES del echo)
+
+
     # ... tus handlers existentes ...
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("pods", consultar_pods))
@@ -1108,6 +1244,12 @@ async def main_async():
     app.add_handler(CommandHandler("restart", cmd_restart))
     app.add_handler(CommandHandler("restart", cmd_restart_confirm))  # Para --confirm
     app.add_handler(CommandHandler("describe", cmd_describe))
+    
+    # Handler para lenguaje natural para el agente
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mensaje_natural_ia))
+    # Handler para confirmaciones
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, confirmar_accion))
+
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, mensaje_normal))
 
