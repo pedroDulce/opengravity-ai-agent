@@ -24,20 +24,146 @@ def cargar_k8s_config():
 # ===========================================
 
 def get_pods(namespace=None, label_selector=None):
-    """Obtiene lista de pods"""
+    """Obtiene lista de pods CON recursos"""
     v1, _ = cargar_k8s_config()
     ns = namespace or K8S_NAMESPACE
     pods = v1.list_namespaced_pod(namespace=ns, label_selector=label_selector)
     
-    return [{
-        "name": pod.metadata.name,
-        "namespace": pod.metadata.namespace,
-        "status": pod.status.phase,
-        "ip": pod.status.pod_ip,
-        "node": pod.spec.node_name,
-        "restarts": sum(cs.restart_count for cs in (pod.status.container_statuses or [])),
-        "age": str(pod.metadata.creation_timestamp).split("+")[0] if pod.metadata.creation_timestamp else "N/A"
-    } for pod in pods.items]
+    result = []
+    for pod in pods.items:
+        # Extraer recursos de los contenedores
+        recursos = []
+        for container in pod.spec.containers:
+            resources = container.resources or {}
+            requests = resources.get("requests", {})
+            limits = resources.get("limits", {})
+            recursos.append({
+                "name": container.name,
+                "cpu_request": requests.get("cpu", "N/A"),
+                "memory_request": requests.get("memory", "N/A"),
+                "cpu_limit": limits.get("cpu", "N/A"),
+                "memory_limit": limits.get("memory", "N/A")
+            })
+        
+        result.append({
+            "name": pod.metadata.name,
+            "namespace": pod.metadata.namespace,
+            "status": pod.status.phase,
+            "ip": pod.status.pod_ip,
+            "node": pod.spec.node_name,
+            "restarts": sum(cs.restart_count for cs in (pod.status.container_statuses or [])),
+            "age": str(pod.metadata.creation_timestamp).split("+")[0] if pod.metadata.creation_timestamp else "N/A",
+            "recursos": recursos
+        })
+    return result
+
+# ===========================================
+# 🌐 HERRAMIENTAS PARA CONTOUR/HTTPPROXY
+# ===========================================
+
+def get_httpproxies(namespace=None):
+    """Obtiene reglas de enrutamiento HTTPProxy (Contour/Project Contour)"""
+    try:
+        from kubernetes import dynamic
+        from kubernetes.client import api_client
+        
+        v1, _ = cargar_k8s_config()
+        ns = namespace or K8S_NAMESPACE
+        
+        dyn_client = dynamic.DynamicClient(
+            api_client.ApiClient(configuration=v1.api_client.configuration)
+        )
+        
+        httpproxy_resource = dyn_client.resources.get(
+            api_version='projectcontour.io/v1',
+            kind='HTTPProxy'
+        )
+        
+        proxies = httpproxy_resource.get(namespace=ns)
+        
+        result = []
+        for proxy in proxies.items:
+            # Extraer información de enrutamiento
+            routes = []
+            if hasattr(proxy, 'spec') and hasattr(proxy.spec, 'routes'):
+                for route in (proxy.spec.routes or []):
+                    routes.append({
+                        "conditions": [c.get("prefix") for c in (route.get("conditions") or []) if c.get("prefix")],
+                        "services": [f"{s.get('name')}:{s.get('port')}" for s in (route.get("services") or [])],
+                        "timeout": route.get("timeoutPolicy", {}).get("timeout", "default")
+                    })
+            
+            # Extraer virtualhost si existe
+            virtualhost = None
+            if hasattr(proxy, 'spec') and hasattr(proxy.spec, 'virtualhost'):
+                vh = proxy.spec.virtualhost
+                virtualhost = getattr(vh, 'fqdn', None) if hasattr(vh, 'fqdn') else None
+            
+            result.append({
+                "name": proxy.metadata.name,
+                "namespace": proxy.metadata.namespace,
+                "virtualhost": virtualhost,
+                "routes": routes,
+                "status": getattr(getattr(proxy, 'status', None), 'currentStatus', 'Unknown'),
+                "description": getattr(getattr(proxy, 'spec', None), 'description', ''),
+                "age": str(proxy.metadata.creation_timestamp).split("+")[0] if proxy.metadata.creation_timestamp else "N/A"
+            })
+        
+        return result
+        
+    except Exception as e:
+        error_str = str(e)
+        # 👇 Detectar error 403 y devolver mensaje estructurado
+        if "403" in error_str or "Forbidden" in error_str:
+            return {
+                "error": "403 Forbidden: Sin permisos para listar HTTPProxy",
+                "hint": "Pide al equipo de plataforma permisos para 'httpproxies.projectcontour.io' o usa 'get_ingresses' como alternativa"
+            }
+        return {
+            "error": f"No se pudieron consultar HTTPProxies: {error_str[:200]}",
+            "hint": "Verifica que Contour está instalado y los CRDs están registrados"
+        }        
+    
+
+def get_ingresses(namespace=None):
+    """
+    Obtiene reglas de enrutamiento Ingress (Kubernetes nativo)
+    Alternativa si no usas Contour
+    """
+    from kubernetes.client import networking_v1
+    
+    v1, _ = cargar_k8s_config()
+    ns = namespace or K8S_NAMESPACE
+    net_v1 = networking_v1.NetworkingV1Api(v1.api_client)
+    
+    ingresses = net_v1.list_namespaced_ingress(namespace=ns)
+    
+    result = []
+    for ing in ingresses.items:
+        rules = []
+        if ing.spec and ing.spec.rules:
+            for rule in ing.spec.rules:
+                host = rule.host or "*"
+                paths = []
+                if rule.http and rule.http.paths:
+                    for path in rule.http.paths:
+                        paths.append({
+                            "path": path.path,
+                            "pathType": path.path_type,
+                            "service": f"{path.backend.service.name}:{path.backend.service.port.number}"
+                        })
+                rules.append({"host": host, "paths": paths})
+        
+        result.append({
+            "name": ing.metadata.name,
+            "namespace": ing.metadata.namespace,
+            "host": ing.spec.rules[0].host if ing.spec.rules and ing.spec.rules[0].host else "*",
+            "rules": rules,
+            "tls": [t.hosts for t in ing.spec.tls] if ing.spec.tls else [],
+            "age": str(ing.metadata.creation_timestamp).split("+")[0] if ing.metadata.creation_timestamp else "N/A"
+        })
+    
+    return result
 
 def get_services(namespace=None):
     """Obtiene lista de servicios y sus endpoints"""
@@ -230,7 +356,19 @@ TOOLS_REGISTRY = {
         "parameters": ["deployment_name", "replicas", "namespace"],
         "requires_confirmation": True,
         "function": scale_deployment
-    }
+    },
+    "get_httpproxies": {
+        "description": "Obtiene reglas de enrutamiento HTTPProxy (Contour/Project Contour)",
+        "parameters": ["namespace"],
+        "requires_confirmation": False,
+        "function": get_httpproxies
+    },
+    "get_ingresses": {
+        "description": "Obtiene reglas de enrutamiento Ingress (Kubernetes nativo)",
+        "parameters": ["namespace"],
+        "requires_confirmation": False,
+        "function": get_ingresses
+    },
 }
 
 def get_tools_description():
@@ -242,3 +380,4 @@ def get_tools_description():
             desc += f"  Parámetros: {', '.join(info['parameters'])}\n"
         desc += f"  ¿Requiere confirmación? {'✅ SÍ' if info['requires_confirmation'] else '❌ NO'}\n\n"
     return desc
+

@@ -8,6 +8,7 @@ import ssl
 import warnings
 import asyncio
 import signal
+import re  # Para escape de Markdown si lo necesitas
 import logging
 import time
 import json
@@ -93,15 +94,150 @@ import httpx
 _original_asyncclient_init = httpx.AsyncClient.__init__
 
 
+# ============================================================
+# 🎨 FORMATEADORES DE RESPUESTAS ESPECIALIZADAS
+# ============================================================
+def formatear_httpproxies(datos):
+    """
+    Formatea datos de HTTPProxy/Ingress para respuesta legible en Telegram
+    Maneja errores de permisos (403) y datos None
+    """
+    # Validar entrada
+    if datos is None:
+        return "⚠️ No se obtuvieron datos de enrutamiento."
+    
+    # Si es un error de API (dict con 'error')
+    if isinstance(datos, dict) and "error" in datos:
+        error_msg = datos.get("error", "Error desconocido")
+        
+        # 👇 Detectar error 403 de permisos y dar mensaje útil
+        if "403" in error_msg or "Forbidden" in error_msg or "forbidden" in error_msg.lower():
+            return (
+                "⚠️ **Sin permisos para consultar HTTPProxy**\n\n"
+                "El ServiceAccount actual no tiene acceso a recursos `httpproxies.projectcontour.io`.\n\n"
+                "🔧 **Opciones:**\n"
+                "1. Pedir al equipo de plataforma permisos para listar HTTPProxy\n"
+                "2. Usar Ingress nativo: `kubectl get ingress -n atom`\n"
+                "3. Consultar manualmente: `kubectl get httpproxy -n atom` (si tienes acceso)\n\n"
+                f"💡 Hint: {datos.get('hint', '')}"
+            )
+        
+        # Otros errores
+        return f"⚠️ {error_msg}\n\n💡 {datos.get('hint', 'Verifica que el recurso está instalado en el clúster.')}"
+    
+    # Si no hay datos (lista vacía)
+    if not datos or (isinstance(datos, list) and len(datos) == 0):
+        return "✅ No hay reglas de enrutamiento configuradas en este namespace."
+    
+    # Determinar tipo de recurso
+    es_httpproxy = isinstance(datos, list) and len(datos) > 0 and datos[0].get('virtualhost') is not None
+    tipo = "HTTPProxy" if es_httpproxy else "Ingress"
+    emoji = "🌐" if es_httpproxy else "🔗"
+    
+    respuesta = f"{emoji} **Reglas de Enrutamiento {tipo}**\n\n"
+    
+    for item in datos:
+        if not isinstance(item, dict):
+            continue  # Saltar items inválidos
+            
+        nombre = item.get('name', 'desconocido')
+        respuesta += f"📋 **{nombre}**\n"
+        
+        # Host/FQDN
+        host = item.get('virtualhost') or item.get('host')
+        if host:
+            respuesta += f"• 🌍 Host: `{host}`\n"
+        
+        # Descripción (solo HTTPProxy)
+        if item.get('description'):
+            respuesta += f"• 📝 {item['description']}\n"
+        
+        # Rutas
+        if item.get('routes') and isinstance(item['routes'], list):
+            respuesta += "• 🛣️ Rutas:\n"
+            for route in item['routes']:
+                if isinstance(route, dict):
+                    # HTTPProxy format
+                    if 'conditions' in route:
+                        prefixes = ", ".join(str(c) for c in route.get('conditions', ['/*']) if c)
+                        services = ", ".join(str(s) for s in route.get('services', []) if s)
+                        respuesta += f"  - `{prefixes}` → {services}\n"
+                    # Ingress format
+                    elif 'paths' in route:
+                        host_r = route.get('host', '*')
+                        for path in route.get('paths', []):
+                            if isinstance(path, dict):
+                                p = path.get('path', '/')
+                                svc = path.get('service', 'unknown')
+                                respuesta += f"  - `{host_r}{p}` → {svc}\n"
+        
+        # Estado (solo HTTPProxy)
+        if item.get('status'):
+            estado_icon = "✅" if str(item['status']).lower() == 'valid' else "⚠️"
+            respuesta += f"• {estado_icon} Estado: `{item['status']}`\n"
+        
+        # TLS (solo Ingress)
+        if item.get('tls'):
+            tls_data = item['tls']
+            if isinstance(tls_data, list) and len(tls_data) > 0:
+                tls_hosts = tls_data[0] if isinstance(tls_data[0], str) else ", ".join(str(t) for t in tls_data[0])
+                respuesta += f"• 🔐 TLS: `{tls_hosts}`\n"
+        
+        # Edad
+        if item.get('age'):
+            respuesta += f"• 🕐 Creado: `{item['age']}`\n"
+        
+        respuesta += "\n"
+    
+    # Resumen final
+    total = len(datos) if isinstance(datos, list) else 1
+    respuesta += f"💡 Total: **{total}** regla(s) de enrutamiento en namespace `{K8S_NAMESPACE}`"
+    
+    return respuesta.strip()
+
+async def _enviar_mensaje_seguro(message, texto, parse_mode="Markdown"):
+    """
+    Envía mensaje con fallback automático si Markdown falla
+    Maneja casos donde texto es None, vacío o no-string
+    """
+    # 👇 VALIDAR texto ANTES de usarlo (CRÍTICO)
+    if texto is None:
+        texto = "⚠️ No se pudo generar una respuesta."
+    elif not isinstance(texto, str):
+        texto = str(texto)
+    
+    texto = texto.strip()
+    if not texto:
+        texto = "✅ Petición procesada (sin contenido para mostrar)."
+    
+    try:
+        await message.edit_text(texto, parse_mode=parse_mode)
+    except Exception as e:
+        logger.warning(f"⚠️ Error parseando {parse_mode}: {str(e)[:100]}")
+        try:
+            # Fallback a HTML (con validación de texto)
+            texto_html = str(texto).replace('*', '<b>').replace('*', '</b>')
+            texto_html = texto_html.replace('`', '<code>').replace('`', '</code>')
+            texto_html = texto_html.replace('_', '<i>').replace('_', '</i>')
+            await message.edit_text(texto_html, parse_mode="HTML")
+        except Exception as e2:
+            logger.warning(f"⚠️ Error con HTML fallback: {str(e2)[:100]}")
+            # Fallback final: texto plano (con validación)
+            texto_limpio = str(texto).replace('*', '').replace('`', '').replace('_', '').replace('[', '').replace(']', '')
+            await message.edit_text(f"⚠️ Error de formato:\n\n{texto_limpio[:3500]}")
+
+
+
 # ===========================================
 # 🤖 HANDLER DE LENGUAJE NATURAL
 # ===========================================
+
 async def mensaje_natural_ia(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Procesa mensajes en lenguaje natural y ejecuta acciones con IA
     """
     texto = update.message.text
-    logger.info(f"📩 Mensaje natural de user_id={update.effective_user.id}: '{texto[:50]}...'")
+    logger.info(f"📩 Mensaje natural de user_id={update.effective_user.id}: '{texto[:100]}...'")
     
     # Mensaje inmediato
     mensaje = await update.message.reply_text(
@@ -109,12 +245,14 @@ async def mensaje_natural_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     
     try:
-        # 1. Consultar al agente de IA
+        # 1. Consultar al agente de IA para obtener el plan
         plan = await agente_k8s(texto)
+        logger.debug(f"🧠 Plan recibido: {plan}")
         
-        # 2. Si es respuesta directa, enviarla
+        # 2. Si es respuesta directa, enviarla inmediatamente
         if plan.get("action") == "respond_directly":
-            await mensaje.edit_text(plan.get("response", "⚠️ No entendí tu petición"))
+            respuesta = plan.get("response", "⚠️ No entendí tu petición")
+            await mensaje.edit_text(respuesta, parse_mode="Markdown")
             return
         
         # 3. Si requiere confirmación, pedir al usuario
@@ -130,64 +268,137 @@ async def mensaje_natural_ia(update: Update, context: ContextTypes.DEFAULT_TYPE)
             confirm_msg += f"\n✅ Para confirmar, responde: `sí` o `confirmar`"
             
             await mensaje.edit_text(confirm_msg, parse_mode="Markdown")
-            
-            # Guardar el plan pendiente en context
             context.user_data['pending_action'] = plan
             return
         
-        # 4. Ejecutar herramientas directamente
+                # 4. Ejecutar herramientas directamente
         resultados = []
         for herramienta in plan.get("tools", []):
             nombre = herramienta.get("name")
             params = herramienta.get("parameters", {})
             
+            logger.info(f"🔧 Ejecutando herramienta: {nombre} con params: {params}")
+            
             if nombre in TOOLS_REGISTRY:
                 try:
                     func = TOOLS_REGISTRY[nombre]["function"]
                     resultado = func(**params)
-                    resultados.append({
-                        "herramienta": nombre,
-                        "exitoso": True,
-                        "datos": resultado
-                    })
+                    
+                    # 👇 FORMATEO ESPECIAL para httpproxies/ingresses
+                    if nombre in ["get_httpproxies", "get_ingresses"]:
+                        resultado_formateado = formatear_httpproxies(resultado)
+                        resultados.append({
+                            "herramienta": nombre,
+                            "exitoso": True,
+                            "datos": resultado,  # Datos crudos para IA
+                            "texto_formateado": resultado_formateado  # Texto listo para mostrar
+                        })
+                    else:
+                        resultados.append({
+                            "herramienta": nombre,
+                            "exitoso": True,
+                            "datos": resultado
+                        })
+                    logger.debug(f"✅ Herramienta {nombre} ejecutada correctamente")
                 except Exception as e:
+                    logger.error(f"❌ Error ejecutando {nombre}: {str(e)}")
                     resultados.append({
                         "herramienta": nombre,
                         "exitoso": False,
                         "error": str(e)
                     })
+            else:
+                logger.warning(f"⚠️ Herramienta desconocida: {nombre}")
+                resultados.append({
+                    "herramienta": nombre,
+                    "exitoso": False,
+                    "error": f"Herramienta '{nombre}' no registrada"
+                })
         
-        # 5. Formatear respuesta final con IA
-        contexto_resultados = json.dumps(resultados, indent=2, default=str)[:2000]
+        # 5. Preparar contexto para la respuesta final
+        contexto_resultados = json.dumps(resultados, indent=2, default=str, ensure_ascii=False)[:3000]
+        logger.debug(f"📦 Resultados para formatear: {contexto_resultados[:500]}...")
         
+        # 👇 DETECTAR si hay resultados formateados de httpproxies/ingresses
+        resultado_formateado_directo = None
+        for r in resultados:
+            if r.get("exitoso") and "texto_formateado" in r:
+                resultado_formateado_directo = r["texto_formateado"]
+                break
+        
+        # 6. Pedir a la IA que formatee la respuesta FINAL
         prompt_final = f"""
-El usuario preguntó: {texto}
+Eres un asistente que debe responder en formato JSON con action: "respond_directly".
 
-Ejecuté estas herramientas y obtuve:
+El usuario preguntó originalmente: "{texto}"
+
+Ejecuté herramientas de Kubernetes y obtuve estos resultados:
 {contexto_resultados}
 
-Genera una respuesta CLARA y ÚTIL en español:
-- Resume los hallazgos principales
-- Usa formato markdown (negritas, listas, código)
-- Incluye emojis para hacerlo más legible
-- Máximo 300 palabras
+Tu tarea: Generar una respuesta CLARA y ÚTIL en español basada en esos resultados.
+
+REGLAS:
+1. DEBES responder con action: "respond_directly"
+2. Incluye la respuesta en el campo "response"
+3. Usa formato markdown SIMPLE: *negrita*, `código`, - listas
+4. Incluye emojis para hacerlo más legible
+5. Sé conciso pero completo (máximo 400 palabras)
+6. Si los resultados muestran errores, menciónalos claramente
+7. Si no hay datos, dilo honestamente
+8. NO uses underscores (_) en nombres, usa guiones (-)
+9. Cierra SIEMPRE los formatos de markdown (* abre y * cierra)
+
+Responde SOLO con JSON válido, sin markdown ni texto extra.
+
+Ejemplo de respuesta esperada:
+{{
+    "action": "respond_directly",
+    "response": "📊 **Recursos de Adminer**\\n\\n• Memoria: 256Mi\\n• CPU: 100m\\n...",
+    "requires_confirmation": false,
+    "explanation": ""
+}}
 """
         
         respuesta_final = await agente_k8s(prompt_final)
+        logger.debug(f"🧠 Respuesta final recibida: {respuesta_final}")
         
+        # 7. Extraer y mostrar la respuesta
         if respuesta_final.get("action") == "respond_directly":
-            await mensaje.edit_text(
-                respuesta_final.get("response", "✅ Petición completada"),
-                parse_mode="Markdown"
-            )
+            respuesta_texto = respuesta_final.get("response", "✅ Petición procesada")
+            
+            # 👇 Si tenemos resultado formateado de httpproxies, USARLO directamente
+            if resultado_formateado_directo and "HTTPProxy" in texto or "Ingress" in texto or "enrutamiento" in texto.lower():
+                respuesta_texto = resultado_formateado_directo
+            
+            await _enviar_mensaje_seguro(mensaje, respuesta_texto)
         else:
-            await mensaje.edit_text("✅ Petición completada")
-        
+            # Fallback: intentar extraer respuesta de cualquier campo
+            respuesta_texto = (
+                respuesta_final.get("response") or 
+                respuesta_final.get("explanation") or
+                json.dumps(respuesta_final, indent=2, ensure_ascii=False)[:500]
+            )
+            
+            # 👇 Mismo fallback para httpproxies
+            if resultado_formateado_directo and not respuesta_texto:
+                respuesta_texto = resultado_formateado_directo
+            
+            if respuesta_texto and respuesta_texto != "✅ Petición completada":
+                await _enviar_mensaje_seguro(mensaje, respuesta_texto)
+            else:
+                # Último fallback: mostrar resultados crudos
+                resumen = f"✅ **Petición procesada**\n\n"
+                resumen += f"**Herramientas ejecutadas:** {len(resultados)}\n"
+                for r in resultados:
+                    estado = "✅" if r.get("exitoso") else "❌"
+                    resumen += f"{estado} `{r['herramienta']}`\n"
+                resumen += f"\n💡 Usa `/reporte` para ver detalles completos."
+                await _enviar_mensaje_seguro(mensaje, resumen)
+                
     except Exception as e:
-        logger.error(f"❌ Error en mensaje natural: {str(e)}")
-        await mensaje.edit_text(f"❌ Error: {str(e)[:200]}")
-    finally:
-        pass  # El mensaje se edita, no se borra
+        logger.error(f"❌ Error en mensaje natural: {str(e)}", exc_info=True)
+        await mensaje.edit_text(f"❌ Error procesando tu petición: {str(e)[:200]}")
+
 
 # Handler para confirmaciones
 async def confirmar_accion(update: Update, context: ContextTypes.DEFAULT_TYPE):

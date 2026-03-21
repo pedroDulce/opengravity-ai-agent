@@ -11,10 +11,26 @@ load_dotenv()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 MODEL = os.getenv("OPENROUTER_MODEL", "xiaomi/mimo-v2-pro")
 
+# En SYSTEM_PROMPT, añade esta sección después de la lista de herramientas:
+
+CONTEXTO_ADICIONAL = """
+NOTAS SOBRE ENRUTAMIENTO:
+• Si el usuario pregunta sobre "reglas de enrutamiento", "HTTPProxy", "Ingress" o "rutas":
+  - Primero intenta con `get_httpproxies` (si usa Contour)
+  - Si falla o no hay resultados, prueba `get_ingresses` (Kubernetes nativo)
+  - Si ambos fallan, explica al usuario qué comando kubectl ejecutar manualmente
+
+• Ejemplo de pregunta: "¿Qué reglas de enrutamiento hay para el servicio apache?"
+  Respuesta esperada: Usar `get_httpproxies(namespace="atom")` y formatear las rutas encontradas
+"""
+
+# Y en el prompt principal, incluye esta variable:
 SYSTEM_PROMPT = f"""
-Eres un Agente Experto de Kubernetes. Tu trabajo es ayudar al usuario a consultar y gestionar su clúster.
+Eres un Agente Experto de Kubernetes...
 
 {get_tools_description()}
+
+{CONTEXTO_ADICIONAL}
 
 INSTRUCCIONES:
 1. Analiza la petición del usuario en lenguaje natural
