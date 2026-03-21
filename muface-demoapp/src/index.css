@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+
+  /* Material 3 / Modern Surface Palette */
+  --color-primary: #0056D2;
+  --color-primary-container: #D7E2FF;
+  --color-on-primary-container: #001945;
+  
+  --color-surface: #F8F9FF;
+  --color-surface-container-lowest: #FFFFFF;
+  --color-surface-container-low: #F3F3FA;
+  --color-surface-container: #EEEEF6;
+  --color-surface-container-high: #E8E7F0;
+  --color-surface-container-highest: #E2E2E9;
+  
+  --color-on-surface: #191C20;
+  --color-on-surface-variant: #43474E;
+  
+  --color-outline: #73777F;
+  --color-outline-variant: #C3C6CF;
+
+  --color-tertiary-fixed: #FFDBCF;
+  --color-on-tertiary-fixed-variant: #8B1A00;
+}
+
+@layer base {
+  * {
+    @apply border-outline-variant/20;
+  }
+  body {
+    @apply bg-surface text-on-surface antialiased;
+  }
+}
+
+/* Custom Utilities */
+.glass-header {
+  @apply bg-white/80 backdrop-blur-xl sticky top-0 z-50;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
