@@ -10,6 +10,16 @@ import asyncio
 import signal
 import logging
 import time
+import json
+# HTTP y SSL
+import httpx
+import urllib3
+# Pandas y Plotly (para /resumen y /grafico)
+import pandas as pd
+import plotly.express as px
+
+# Imports de librerias externas
+from io import BytesIO
 from datetime import datetime
 from typing import Callable, Any
 from pathlib import Path
@@ -25,15 +35,6 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 # Prometheus
 from prometheus_client import start_http_server, Counter, Histogram
-
-# HTTP y SSL
-import httpx
-import urllib3
-
-# Pandas y Plotly (para /resumen y /grafico)
-import pandas as pd
-import plotly.express as px
-from io import BytesIO
 
 # Importar el agente
 from k8s_agent import agente_k8s
