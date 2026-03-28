@@ -46,17 +46,10 @@ import { Expediente, Actividad } from '../../models';
           </div>
           <div class="relative min-h-[420px] bg-surface-container-low/30 flex items-center justify-center p-6">
             <img
-              src="https://upload.wikimedia.org/wikipedia/commons/9/99/Spain_location_map.svg"
+              src="/assets/spain-map.svg"
               alt="Mapa de España"
-              (error)="useMapFallback = true"
-              [class.opacity-100]="!useMapFallback"
-              [class.opacity-70]="useMapFallback"
               class="absolute inset-0 w-full h-full object-contain"
             />
-            <div *ngIf="useMapFallback" class="absolute inset-0 bg-gradient-to-br from-blue-50 via-white to-blue-100 flex flex-col items-center justify-center text-blue-800 text-xl font-bold opacity-90">
-              <span>Mapa no disponible</span>
-              <span>Mostrando fallback</span>
-            </div>
             <div class="absolute inset-0">
               <div *ngFor="let point of mapData; trackBy: trackByCity" class="absolute transform -translate-x-1/2 -translate-y-1/2 bg-white/90 text-gray-900 rounded-full p-1.5 text-xs font-bold shadow-lg" [style.top]="point.top" [style.left]="point.left">
                 {{point.city}} ({{point.count}})
@@ -139,7 +132,8 @@ export class DashboardComponent implements OnInit {
   activity: Actividad[] = [];
   expedientes: Expediente[] = [];
   titulares: any[] = [];
-  ciudades: any[] = [];  useMapFallback = false;  mapData = [
+  ciudades: any[] = [];
+  mapData = [
     { city: 'Madrid', count: 0, top: '45%', left: '55%' },
     { city: 'Barcelona', count: 0, top: '30%', left: '80%' },
     { city: 'Sevilla', count: 0, top: '70%', left: '40%' },
@@ -162,6 +156,7 @@ export class DashboardComponent implements OnInit {
 
   loadData() {
     this.firestoreService.getExpedientes().subscribe((expedientes) => {
+      console.log('Debug getExpedientes:', expedientes);
       this.expedientes = expedientes;
       this.kpis[0].value = expedientes.length.toString();
       const estados = { Activo: 0, Pendiente: 0, Resuelto: 0 };
@@ -175,6 +170,7 @@ export class DashboardComponent implements OnInit {
     });
 
     this.firestoreService.getTitulares().subscribe((titulares) => {
+      console.log('Debug getTitulares:', titulares);
       this.titulares = titulares;
       this.kpis[2].value = titulares.length.toString();
       const activos = titulares.filter(t => t.status === 'Activo').length;
@@ -182,6 +178,7 @@ export class DashboardComponent implements OnInit {
     });
 
     this.firestoreService.getCiudades().subscribe((ciudades) => {
+      console.log('Debug getCiudades:', ciudades);
       this.ciudades = ciudades;
       this.updateMapData();
     });
