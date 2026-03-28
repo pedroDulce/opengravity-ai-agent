@@ -2,7 +2,7 @@
 :: run_bot.bat - Auto-restart del bot si se cierra inesperadamente
 
 :restart
-:: .\venv\Scripts\Activate.ps1
+.\venv\Scripts\Activate.ps1
 echo [%DATE% %TIME%] Iniciando OpenGravity Bot...
 python .\dev_bot.py
 set EXIT_CODE=%ERRORLEVEL%

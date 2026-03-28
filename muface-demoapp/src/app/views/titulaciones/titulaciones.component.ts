@@ -48,7 +48,7 @@ import { RouterLink } from '@angular/router';
         <div class="bg-surface-container-high px-8 py-5 flex justify-between items-center">
           <h3 class="font-display font-bold text-on-surface-variant text-xs uppercase tracking-[0.2em]">Registro de Títulos</h3>
           <div class="relative w-64">
-            <lucide-icon name="search" class="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/40" [size]="14"></lucide-icon>
+            <lucide-icon name="magnifying-glass" class="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/40" [size]="14"></lucide-icon>
             <input type="text" placeholder="Filtrar títulos..." class="w-full bg-white border-none rounded-lg py-2 pl-9 pr-4 text-xs font-sans focus:ring-1 focus:ring-primary/20" />
           </div>
         </div>

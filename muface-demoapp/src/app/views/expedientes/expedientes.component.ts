@@ -1,7 +1,9 @@
-import { Component } from '@angular/core';
+import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { LucideAngularModule } from 'lucide-angular';
 import { RouterLink } from '@angular/router';
+import { FirestoreService } from '../../services/firestore.service';
+import { Expediente } from '../../models';
 
 @Component({
   selector: 'app-expedientes',
@@ -44,7 +46,7 @@ import { RouterLink } from '@angular/router';
           </div>
           <div class="flex gap-3 w-full md:w-auto">
             <div class="relative flex-1 md:w-64">
-              <lucide-icon name="search" class="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/40" [size]="14"></lucide-icon>
+              <lucide-icon name="magnifying-glass" class="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/40" [size]="14"></lucide-icon>
               <input type="text" placeholder="Buscar por ID o Titular..." class="w-full bg-white border-none rounded-lg py-2 pl-9 pr-4 text-xs font-sans focus:ring-1 focus:ring-primary/20" />
             </div>
             <button class="p-2 bg-white rounded-lg text-on-surface-variant hover:text-primary transition-colors border border-outline-variant/10">
@@ -67,14 +69,18 @@ import { RouterLink } from '@angular/router';
             <tbody class="divide-y divide-surface-container-high">
               @for (exp of expedientes; track exp.id) {
                 <tr class="hover:bg-surface-container-low transition-colors group cursor-pointer" routerLink="/edit-expediente">
-                  <td class="px-8 py-6 font-mono text-xs text-primary font-bold">{{exp.id}}</td>
-                  <td class="px-8 py-6 font-bold text-on-surface">{{exp.name}}</td>
-                  <td class="px-8 py-6 text-sm text-on-surface-variant">{{exp.type}}</td>
-                  <td class="px-8 py-6 text-sm text-on-surface-variant">{{exp.date}}</td>
+                  <td class="px-8 py-6 font-mono text-xs text-primary font-bold">{{exp.numero}}</td>
+                  <td class="px-8 py-6 font-bold text-on-surface">{{exp.titular_id}}</td>
+                  <td class="px-8 py-6 text-sm text-on-surface-variant">{{exp.organismo_id}}</td>
+                  <td class="px-8 py-6 text-sm text-on-surface-variant">{{exp.fecha_creacion | date:'shortDate'}}</td>
                   <td class="px-8 py-6">
                     <div class="flex items-center gap-2">
-                      <div class="w-1.5 h-1.5 rounded-full" [class.bg-on-tertiary-fixed-variant]="exp.urgent" [class.animate-pulse]="exp.urgent" [class.bg-amber-500]="exp.alert" [class.bg-emerald-500]="!exp.urgent && !exp.alert"></div>
-                      <span class="text-[10px] font-black uppercase tracking-widest" [class]="exp.color">{{exp.status}}</span>
+                      <div class="w-1.5 h-1.5 rounded-full" [class.bg-blue-500]="exp.estado === 'Activo'" [class.bg-amber-500]="exp.estado === 'Pendiente'" [class.bg-emerald-500]="exp.estado === 'Resuelto'"></div>
+                      <span class="text-[10px] font-black uppercase tracking-widest" [ngClass]="{
+                        'text-primary': exp.estado === 'Activo',
+                        'text-amber-600': exp.estado === 'Pendiente',
+                        'text-emerald-600': exp.estado === 'Resuelto'
+                      }">{{exp.estado}}</span>
                     </div>
                   </td>
                   <td class="px-8 py-6 text-right">
@@ -89,12 +95,15 @@ import { RouterLink } from '@angular/router';
     </div>
   `
 })
-export class ExpedientesComponent {
+export class ExpedientesComponent implements OnInit {
   tabs = ['Todos', 'Pendientes', 'En Trámite', 'Completados', 'Urgentes'];
-  expedientes = [
-    { id: 'EXP-2024-001', name: 'García López, María', type: 'Prestación Dentaria', date: '12/03/2024', status: 'En Trámite', color: 'text-primary' },
-    { id: 'EXP-2024-042', name: 'Sánchez Ruiz, Pedro', type: 'Ayuda Asistencial', date: '10/03/2024', status: 'Pendiente', color: 'text-amber-600', alert: true },
-    { id: 'EXP-2024-089', name: 'Rodríguez Gil, Juan', type: 'Baja por Enfermedad', date: '08/03/2024', status: 'Completado', color: 'text-emerald-600' },
-    { id: 'EXP-2024-112', name: 'Martín Sanz, Lucía', type: 'Subsidio Jubilación', date: '05/03/2024', status: 'Urgente', color: 'text-on-tertiary-fixed-variant', urgent: true },
-  ];
+  expedientes: Expediente[] = [];
+
+  constructor(private firestoreService: FirestoreService) {}
+
+  ngOnInit() {
+    this.firestoreService.getExpedientes().subscribe((expedientes) => {
+      this.expedientes = expedientes;
+    });
+  }
 }

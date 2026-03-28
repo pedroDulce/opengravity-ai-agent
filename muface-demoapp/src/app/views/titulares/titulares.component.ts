@@ -1,12 +1,15 @@
-import { Component } from '@angular/core';
+import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { ReactiveFormsModule, FormBuilder, Validators } from '@angular/forms';
 import { LucideAngularModule } from 'lucide-angular';
 import { RouterLink } from '@angular/router';
+import { FirestoreService } from '../../services/firestore.service';
+import { Titular } from '../../models';
 
 @Component({
   selector: 'app-titulares',
   standalone: true,
-  imports: [CommonModule, LucideAngularModule, RouterLink],
+  imports: [CommonModule, ReactiveFormsModule, LucideAngularModule, RouterLink],
   template: `
     <div class="space-y-10">
       <header class="flex flex-col md:flex-row md:items-end justify-between gap-6">
@@ -31,6 +34,22 @@ import { RouterLink } from '@angular/router';
         </div>
       </header>
 
+      <div class="bg-surface-container-lowest rounded-3xl p-6 mb-6">
+        <h2 class="font-display text-xl font-bold text-on-surface mb-4">Nuevo Titular</h2>
+        <form [formGroup]="titularForm" (ngSubmit)="addTitular()" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <input formControlName="nombre" placeholder="Nombre" class="p-3 rounded-lg border border-outline-variant/40" />
+          <input formControlName="apellidos" placeholder="Apellidos" class="p-3 rounded-lg border border-outline-variant/40" />
+          <input formControlName="dni" placeholder="DNI" class="p-3 rounded-lg border border-outline-variant/40" />
+          <input formControlName="email" type="email" placeholder="Email" class="p-3 rounded-lg border border-outline-variant/40" />
+          <input formControlName="telefono" placeholder="Teléfono" class="p-3 rounded-lg border border-outline-variant/40" />
+          <select formControlName="status" class="p-3 rounded-lg border border-outline-variant/40">
+            <option value="Activo">Activo</option>
+            <option value="Jubilado">Jubilado</option>
+            <option value="Baja">Baja</option>
+          </select>
+          <button type="submit" [disabled]="titularForm.invalid" class="col-span-1 md:col-span-2 bg-primary text-white py-2 rounded-lg font-bold hover:bg-primary/80">Guardar titular</button>
+        </form>
+      </div>
       <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
         <div class="lg:col-span-3 bg-surface-container-lowest rounded-3xl overflow-hidden shadow-sm">
           <div class="p-8 border-b border-outline-variant/10 flex justify-between items-center">
@@ -40,7 +59,7 @@ import { RouterLink } from '@angular/router';
               <button class="px-4 py-2 text-on-surface-variant hover:bg-surface-container-low rounded-xl text-xs font-bold">Jubilados</button>
             </div>
             <div class="relative w-72">
-              <lucide-icon name="search" class="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant/40" [size]="18"></lucide-icon>
+              <lucide-icon name="magnifying-glass" class="absolute left-4 top-1/2 -translate-y-1/2 text-on-surface-variant/40" [size]="18"></lucide-icon>
               <input type="text" placeholder="Buscar por DNI o Nombre..." class="w-full bg-surface-container-low border-none rounded-2xl py-3 pl-12 pr-4 text-sm font-sans focus:ring-2 focus:ring-primary/20" />
             </div>
           </div>
@@ -59,18 +78,19 @@ import { RouterLink } from '@angular/router';
                 @for (tit of titulares; track tit.dni) {
                   <tr class="hover:bg-surface-container-low/50 transition-colors">
                     <td class="px-8 py-5">
-                      <p class="font-bold text-on-surface text-sm">{{tit.name}}</p>
+                      <p class="font-bold text-on-surface text-sm">{{tit.nombre}} {{tit.apellidos}}</p>
                       <p class="text-[10px] text-on-surface-variant font-medium opacity-60">Afiliado desde 2015</p>
                     </td>
                     <td class="px-8 py-5 font-mono text-xs text-on-surface-variant">{{tit.dni}}</td>
-                    <td class="px-8 py-5 text-sm text-on-surface-variant">{{tit.prov}}</td>
+                    <td class="px-8 py-5 text-sm text-on-surface-variant">{{tit.provincia || 'N/A'}}</td>
                     <td class="px-8 py-5">
                       <div class="flex items-center gap-2">
                         <div class="w-1.5 h-1.5 rounded-full" [ngClass]="{
-                          'bg-on-tertiary-fixed-variant': tit.alert,
-                          'bg-emerald-500': !tit.alert
+                          'bg-emerald-500': tit.status === 'Activo',
+                          'bg-amber-500': tit.status === 'Jubilado',
+                          'bg-red-500': tit.status === 'Baja'
                         }"></div>
-                        <span class="text-xs font-bold text-on-surface">{{tit.status}}</span>
+                        <span class="text-xs font-bold text-on-surface">{{tit.status || 'Activo'}}</span>
                       </div>
                     </td>
                     <td class="px-8 py-5 text-right">
@@ -90,24 +110,24 @@ import { RouterLink } from '@angular/router';
               <div>
                 <div class="flex justify-between text-xs font-bold uppercase tracking-widest mb-2 opacity-60">
                   <span>Activos</span>
-                  <span>72%</span>
+                  <span>{{activeRatio}}%</span>
                 </div>
                 <div class="h-2 bg-white/10 rounded-full overflow-hidden">
-                  <div class="h-full bg-white w-[72%]"></div>
+                  <div class="h-full bg-white" [style.width.%]="activeRatio"></div>
                 </div>
               </div>
               <div>
                 <div class="flex justify-between text-xs font-bold uppercase tracking-widest mb-2 opacity-60">
                   <span>Jubilados</span>
-                  <span>28%</span>
+                  <span>{{100 - activeRatio}}%</span>
                 </div>
                 <div class="h-2 bg-white/10 rounded-full overflow-hidden">
-                  <div class="h-full bg-white w-[28%]"></div>
+                  <div class="h-full bg-white" [style.width.%]="100 - activeRatio"></div>
                 </div>
               </div>
             </div>
             <div class="mt-8 pt-8 border-t border-white/10">
-              <p class="text-3xl font-display font-black">892.412</p>
+              <p class="text-3xl font-display font-black">{{titulares.length}}</p>
               <p class="text-[10px] font-bold uppercase tracking-widest opacity-60">Total Mutualistas</p>
             </div>
           </div>
@@ -133,16 +153,51 @@ import { RouterLink } from '@angular/router';
     </div>
   `
 })
-export class TitularesComponent {
-  titulares = [
-    { name: 'MARTÍNEZ SÁEZ, ROBERTO', dni: '12345678A', prov: 'Madrid', status: 'Activo' },
-    { name: 'LÓPEZ RUIZ, ELENA', dni: '87654321B', prov: 'Barcelona', status: 'Activo' },
-    { name: 'GÓMEZ CANO, JAVIER', dni: '45678901C', prov: 'Sevilla', status: 'Baja', alert: true },
-    { name: 'FERNÁNDEZ DÍAZ, ANA', dni: '23456789D', prov: 'Valencia', status: 'Activo' },
-  ];
+export class TitularesComponent implements OnInit {
+  titulares: Titular[] = [];
+  activeRatio = 0;
+  titularForm = this.fb.group({
+    nombre: ['', Validators.required],
+    apellidos: ['', Validators.required],
+    dni: ['', [Validators.required, Validators.minLength(8)]],
+    email: ['', [Validators.required, Validators.email]],
+    telefono: ['', Validators.required],
+    status: ['Activo', Validators.required],
+  });
 
   revisions = [
     { id: 1, title: 'Revisión Trienal', time: 'Expira en 14 días' },
     { id: 2, title: 'Revisión Trienal', time: 'Expira en 21 días' },
   ];
+
+  constructor(private firestoreService: FirestoreService, private fb: FormBuilder) {}
+
+  ngOnInit() {
+    this.firestoreService.getTitulares().subscribe((titulares) => {
+      this.titulares = titulares;
+      const activos = this.titulares.filter((t) => (t as any).status === 'Activo').length;
+      this.activeRatio = this.titulares.length ? Math.round((activos / this.titulares.length) * 100) : 0;
+    });
+  }
+
+  async addTitular() {
+    if (this.titularForm.invalid) {
+      return;
+    }
+
+    const titular: Titular = {
+      nombre: this.titularForm.value.nombre!,
+      apellidos: this.titularForm.value.apellidos!,
+      dni: this.titularForm.value.dni!,
+      email: this.titularForm.value.email!,
+      telefono: this.titularForm.value.telefono!,
+    };
+
+    try {
+      await this.firestoreService.addTitular(titular);
+      this.titularForm.reset({ status: 'Activo' });
+    } catch (error) {
+      console.error('No se pudo crear titular', error);
+    }
+  }
 }

@@ -36,7 +36,7 @@ import { RouterLink } from '@angular/router';
             <button class="text-xs font-bold px-4 py-2 text-on-surface-variant hover:bg-white/50 rounded-lg transition-all">Sedes</button>
           </div>
           <div class="relative w-64">
-            <lucide-icon name="search" class="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/40" [size]="14"></lucide-icon>
+            <lucide-icon name="magnifying-glass" class="absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant/40" [size]="14"></lucide-icon>
             <input type="text" placeholder="Buscar organismo..." class="w-full bg-white border-none rounded-lg py-2 pl-9 pr-4 text-xs font-sans focus:ring-1 focus:ring-primary/20" />
           </div>
         </div>
